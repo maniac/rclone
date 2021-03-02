@@ -62,6 +62,7 @@ require (
 	github.com/xanzy/ssh-agent v0.3.0
 	github.com/youmark/pkcs8 v0.0.0-20201027041543-1326539a0a0a
 	github.com/yunify/qingstor-sdk-go/v3 v3.2.0
+	github.com/zach-klippenstein/goadb v0.0.0-20201208042340-620e0e950ed7
 	go.etcd.io/bbolt v1.3.5
 	go.opencensus.io v0.22.6 // indirect
 	go.uber.org/zap v1.16.0 // indirect
