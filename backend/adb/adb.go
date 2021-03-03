@@ -14,6 +14,7 @@ import (
 	"github.com/rclone/rclone/fs/config/configmap"
 	"github.com/rclone/rclone/fs/config/configstruct"
 	"github.com/rclone/rclone/fs/hash"
+	"github.com/rclone/rclone/lib/errors"
 
 	adb "github.com/zach-klippenstein/goadb"
 )
@@ -98,6 +99,25 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 	return f, nil
 }
 
+func (f *Fs) runCommand(cmd string, args ...string) (string, int, error) {
+	args = append(args, ";", "echo", ":$?")
+	ret, err := f.device.RunCommand(cmd, args...)
+	if err != nil {
+		return "", 0, err
+	}
+
+	codePos := strings.LastIndex(ret, ":")
+	code, err := strconv.Atoi(ret[codePos+1 : len(ret)-1])
+	if err != nil {
+		return "", 0, err
+	}
+
+	if codePos > 0 {
+		return ret[0 : codePos-1], code, nil
+	}
+	return "", code, nil
+}
+
 // Name of the remote (as passed into NewFs)
 func (f *Fs) Name() string {
 	return f.name
@@ -128,6 +148,19 @@ func (f *Fs) Features() *fs.Features {
 	return f.features
 }
 
+func (f *Fs) newObject(root string, name string, size int64, mode os.FileMode, modTime time.Time) *Object {
+	dir := f.root + "/" + root
+	return &Object{
+		fs:      f,
+		path:    &dir,
+		name:    name,
+		remote:  strings.Trim(root+"/"+name, "/"),
+		size:    size,
+		mode:    mode,
+		modTime: modTime,
+	}
+}
+
 // List the objects and directories in dir into entries.  The
 // entries can be returned in any order but should be for a
 // complete directory.
@@ -154,19 +187,14 @@ func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err e
 		}
 
 		if entry.Mode.IsDir() {
-			d := fs.NewDir(strings.Trim(root+"/"+entry.Name, "/"), entry.ModifiedAt)
-			allEntries = append(allEntries, d)
+			allEntries = append(allEntries, fs.NewDir(strings.Trim(root+"/"+entry.Name, "/"), entry.ModifiedAt))
 		} else {
-			obj := Object{
-				fs:      f,
-				path:    &dir,
-				name:    entry.Name,
-				remote:  strings.Trim(root+"/"+entry.Name, "/"),
-				size:    int64(entry.Size),
-				mode:    entry.Mode,
-				modTime: entry.ModifiedAt,
-			}
-			allEntries = append(allEntries, &obj)
+			allEntries = append(allEntries, f.newObject(
+				root,
+				entry.Name,
+				int64(entry.Size),
+				entry.Mode,
+				entry.ModifiedAt))
 		}
 	}
 
@@ -176,7 +204,35 @@ func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err e
 // NewObject finds the Object at remote.  If it can't be found
 // it returns the error ErrorObjectNotFound.
 func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
-	return nil, fs.ErrorObjectNotFound
+	ret, code, err := f.runCommand("stat", "-c", "%f %s %Y", f.root+"/"+remote)
+	if err != nil {
+		return nil, err
+	}
+
+	if code != 0 {
+		if strings.Contains(ret, "No such file or directory") {
+			return nil, fs.ErrorObjectNotFound
+		}
+		return nil, errors.Errorf("stat unknown %d: %s", code, ret)
+	}
+
+	modeStrings := strings.Split(ret, " ")
+	mode, _ := strconv.ParseInt(modeStrings[0], 16, 64)
+	size, _ := strconv.ParseInt(modeStrings[1], 10, 64)
+	modTime, _ := strconv.ParseInt(modeStrings[2], 10, 64)
+
+	fileMode := os.FileMode(mode)
+	if fileMode.IsDir() {
+		return nil, fs.ErrorNotAFile
+	}
+
+	filePos := strings.LastIndex(remote, "/")
+	if filePos == -1 {
+		filePos = 0
+		remote = "/" + remote
+	}
+
+	return f.newObject(remote[0:filePos], remote[filePos+1:], size, fileMode, time.Unix(modTime, 0)), nil
 }
 
 // Put in to the remote path with the modTime given of the given size
@@ -189,21 +245,60 @@ func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
 // will return the object and the error, otherwise will return
 // nil and the error
 func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (fs.Object, error) {
-	return nil, fs.ErrorObjectNotFound
+	remote := src.Remote()
+	filePos := strings.LastIndex(remote, "/")
+	if filePos == -1 {
+		filePos = 0
+		remote = "/" + remote
+	}
+
+	o := f.newObject(remote[0:filePos], remote[filePos+1:], src.Size(), os.FileMode(0644), src.ModTime(ctx))
+	err := o.Update(ctx, in, src, options...)
+	if err != nil {
+		return nil, err
+	}
+	return o, nil
 }
 
 // Mkdir makes the directory (container, bucket)
 //
 // Shouldn't return an error if it already exists
 func (f *Fs) Mkdir(ctx context.Context, dir string) error {
-	panic("not implemented") // TODO: Implement
+	ret, code, err := f.runCommand("mkdir", "-p", f.root+"/"+dir)
+	if err != nil {
+		return err
+	}
+
+	if code != 0 {
+		if !strings.Contains(ret, "File exists") {
+			return errors.Errorf("mkdir return %d, %s", code, ret)
+		}
+	}
+
+	return nil
 }
 
 // Rmdir removes the directory (container, bucket) if empty
 //
 // Return an error if it doesn't exist or isn't empty
 func (f *Fs) Rmdir(ctx context.Context, dir string) error {
-	panic("not implemented") // TODO: Implement
+	ret, code, err := f.runCommand("rmdir", f.root+"/"+dir)
+	if err != nil {
+		return err
+	}
+
+	if code != 0 {
+		if strings.Contains(ret, "Directory not empty") {
+			return fs.ErrorDirectoryNotEmpty
+		}
+		return errors.Errorf("rm return %d, %s", code, ret)
+	}
+
+	return nil
+}
+
+func (o *Object) fullpath() string {
+	return *o.path + "/" + o.name
 }
 
 // String returns a description of the Object
@@ -251,7 +346,6 @@ func (o *Object) SetModTime(ctx context.Context, t time.Time) error {
 // Open opens the file for read.  Call Close() on the returned io.ReadCloser
 func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadCloser, error) {
 	var offset, limit int64 = 0, o.size
-	filename := *o.path + "/" + o.name
 
 	for _, option := range options {
 		switch x := option.(type) {
@@ -268,7 +362,7 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 
 	if offset == 0 && limit == o.size {
 		// same as adb pull
-		return o.fs.device.OpenRead(filename)
+		return o.fs.device.OpenRead(o.fullpath())
 	}
 
 	blocksize := int64(65536)
@@ -281,7 +375,7 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 	firstByte := offset - firstBlock*blocksize
 	result, err := o.fs.device.RunCommand(
 		"dd",
-		"if="+filename,
+		"if="+o.fullpath(),
 		fmt.Sprintf("bs=%d", blocksize),
 		fmt.Sprintf("skip=%d", firstBlock),
 		fmt.Sprintf("count=%d", lastBlock-firstBlock),
@@ -299,13 +393,38 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 // But for unknown-sized objects (indicated by src.Size() == -1), Upload should either
 // return an error or update the object properly (rather than e.g. calling panic).
 func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) error {
-	return fs.ErrorPermissionDenied
+	out, err := o.fs.device.OpenWrite(o.fullpath(), os.FileMode(0644), src.ModTime(ctx))
+	if err != nil {
+		return err
+	}
+
+	var newSize int64
+
+	if n := src.Size(); n == -1 {
+		newSize, err = io.Copy(out, in)
+	} else {
+		newSize, err = io.CopyN(out, in, n)
+	}
+
+	out.Close()
+	if err == nil {
+		o.size = newSize
+	}
+	return err
 }
 
 // Removes this object
 func (o *Object) Remove(ctx context.Context) error {
-	// call rm -f {PATH}
-	return fs.ErrorPermissionDenied
+	ret, code, err := o.fs.runCommand("rm", o.fullpath())
+	if err != nil {
+		return err
+	}
+
+	if code != 0 {
+		return errors.Errorf("rm return %d, %s", code, ret)
+	}
+
+	return nil
 }
 
 // Purge all files in the directory specified
@@ -315,8 +434,16 @@ func (o *Object) Remove(ctx context.Context) error {
 //
 // Return an error if it doesn't exist
 func (f *Fs) Purge(ctx context.Context, dir string) error {
-	// call rm -rf {PATH}
-	return fs.ErrorPermissionDenied
+	ret, code, err := f.runCommand("rm", "-rf", f.root+"/"+dir)
+	if err != nil {
+		return err
+	}
+
+	if code != 0 {
+		return errors.Errorf("rm return %d, %s", code, ret)
+	}
+
+	return nil
 }
 
 // Copy src to this remote using server-side copy operations.
@@ -329,8 +456,22 @@ func (f *Fs) Purge(ctx context.Context, dir string) error {
 //
 // If it isn't possible then return fs.ErrorCantCopy
 func (f *Fs) Copy(ctx context.Context, src fs.Object, remote string) (fs.Object, error) {
-	// call cp {SRC} {REMOTE}
-	return nil, fs.ErrorPermissionDenied
+	ret, code, err := f.runCommand("cp", f.root+"/"+src.Remote(), f.root+"/"+remote)
+	if err != nil {
+		return nil, err
+	}
+
+	if code != 0 {
+		return nil, errors.Errorf("cp return %d, %s", code, ret)
+	}
+
+	filePos := strings.LastIndex(remote, "/")
+	if filePos == -1 {
+		filePos = 0
+		remote = "/" + remote
+	}
+
+	return f.newObject(remote[0:filePos], remote[filePos+1:], src.Size(), os.FileMode(0644), src.ModTime(ctx)), nil
 }
 
 // Move src to this remote using server-side move operations.
@@ -343,8 +484,26 @@ func (f *Fs) Copy(ctx context.Context, src fs.Object, remote string) (fs.Object,
 //
 // If it isn't possible then return fs.ErrorCantMove
 func (f *Fs) Move(ctx context.Context, src fs.Object, remote string) (fs.Object, error) {
-	// call mv {SRC} {REMOTE}
-	return nil, fs.ErrorPermissionDenied
+	ret, code, err := f.runCommand("mv", f.root+"/"+src.Remote(), f.root+"/"+remote)
+
+	if err != nil {
+		return nil, err
+	}
+
+	if code != 0 {
+		if strings.Contains(ret, "No such file or directory") {
+			return nil, fs.ErrorObjectNotFound
+		}
+		return nil, errors.Errorf("mv return %d, %s", code, ret)
+	}
+
+	filePos := strings.LastIndex(remote, "/")
+	if filePos == -1 {
+		filePos = 0
+		remote = "/" + remote
+	}
+
+	return f.newObject(remote[0:filePos], remote[filePos+1:], src.Size(), os.FileMode(0644), src.ModTime(ctx)), nil
 }
 
 // DirMove moves src, srcRemote to this remote at dstRemote
