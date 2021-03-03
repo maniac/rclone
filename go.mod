@@ -25,6 +25,7 @@ require (
 	github.com/dop251/scsu v0.0.0-20200422003335-8fadfb689669
 	github.com/dropbox/dropbox-sdk-go-unofficial v1.0.1-0.20210114204226-41fdcdae8a53
 	github.com/gabriel-vasile/mimetype v1.1.2
+	github.com/go-git/go-git/v5 v5.2.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/google/go-querystring v1.0.0 // indirect
 	github.com/google/uuid v1.2.0 // indirect
