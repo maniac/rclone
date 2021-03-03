@@ -456,7 +456,8 @@ func (f *Fs) Purge(ctx context.Context, dir string) error {
 //
 // If it isn't possible then return fs.ErrorCantCopy
 func (f *Fs) Copy(ctx context.Context, src fs.Object, remote string) (fs.Object, error) {
-	ret, code, err := f.runCommand("cp", f.root+"/"+src.Remote(), f.root+"/"+remote)
+	srcFs := src.(*Object).fs
+	ret, code, err := f.runCommand("cp", srcFs.root+"/"+src.Remote(), f.root+"/"+remote)
 	if err != nil {
 		return nil, err
 	}
