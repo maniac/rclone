@@ -161,6 +161,33 @@ func (f *Fs) newObject(root string, name string, size int64, mode os.FileMode, m
 	}
 }
 
+func (f *Fs) tryStat(path string) (os.FileMode, int64, time.Time, error) {
+	file := "/" + strings.Trim(f.root+"/"+path, "/")
+	ret, code, err := f.runCommand("F="+file, ";", "while", "test", "-L", "$F", ";", "do", "F=`readlink", "$F`", ";", "done", ";", "stat", "-c", "%f %s %Y", "$F")
+	if err != nil {
+		return 0, 0, time.Time{}, err
+	}
+
+	if code != 0 {
+		if strings.Contains(ret, "No such file or directory") {
+			return 0, 0, time.Time{}, err
+		}
+		return 0, 0, time.Time{}, errors.Errorf("stat unknown %d: %s", code, ret)
+	}
+
+	modeStrings := strings.Split(ret, " ")
+	mode, _ := strconv.ParseInt(modeStrings[0], 16, 64)
+	size, _ := strconv.ParseInt(modeStrings[1], 10, 64)
+	modTime, _ := strconv.ParseInt(modeStrings[2], 10, 64)
+
+	if (mode & 0040000) != 0 {
+		mode |= int64(os.ModeDir)
+	}
+
+	fileMode := os.FileMode(mode)
+	return fileMode, size, time.Unix(modTime, 0), nil
+}
+
 // List the objects and directories in dir into entries.  The
 // entries can be returned in any order but should be for a
 // complete directory.
@@ -172,8 +199,7 @@ func (f *Fs) newObject(root string, name string, size int64, mode os.FileMode, m
 // found.
 func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err error) {
 	root := dir
-	dir = f.root + "/" + dir
-
+	dir = "/" + strings.Trim(f.root+"/"+dir, "/")
 	list, err := f.device.ListDirEntries(dir)
 	if err != nil {
 		return nil, err
@@ -184,6 +210,15 @@ func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err e
 		entry := list.Entry()
 		if entry.Name == "." || entry.Name == ".." {
 			continue
+		}
+
+		if (entry.Mode & os.ModeSymlink) != 0 {
+			newMode, newSize, newModTime, err := f.tryStat(root + "/" + entry.Name)
+			if err == nil {
+				entry.Mode = newMode
+				entry.Size = int32(newSize)
+				entry.ModifiedAt = newModTime
+			}
 		}
 
 		if entry.Mode.IsDir() {
@@ -198,30 +233,26 @@ func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err e
 		}
 	}
 
+	if len(allEntries) == 0 {
+		// for non-root user to access /data/local/tmp
+		if dir == "/data" {
+			allEntries = append(allEntries, fs.NewDir(strings.Trim(root+"/local", "/"), time.Now()))
+		} else if dir == "/data/local" {
+			allEntries = append(allEntries, fs.NewDir(strings.Trim(root+"/tmp", "/"), time.Now()))
+		}
+	}
+
 	return allEntries, nil
 }
 
 // NewObject finds the Object at remote.  If it can't be found
 // it returns the error ErrorObjectNotFound.
 func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
-	ret, code, err := f.runCommand("stat", "-c", "%f %s %Y", f.root+"/"+remote)
+	fileMode, size, modTime, err := f.tryStat(remote)
 	if err != nil {
 		return nil, err
 	}
 
-	if code != 0 {
-		if strings.Contains(ret, "No such file or directory") {
-			return nil, fs.ErrorObjectNotFound
-		}
-		return nil, errors.Errorf("stat unknown %d: %s", code, ret)
-	}
-
-	modeStrings := strings.Split(ret, " ")
-	mode, _ := strconv.ParseInt(modeStrings[0], 16, 64)
-	size, _ := strconv.ParseInt(modeStrings[1], 10, 64)
-	modTime, _ := strconv.ParseInt(modeStrings[2], 10, 64)
-
-	fileMode := os.FileMode(mode)
 	if fileMode.IsDir() {
 		return nil, fs.ErrorNotAFile
 	}
@@ -232,7 +263,7 @@ func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
 		remote = "/" + remote
 	}
 
-	return f.newObject(remote[0:filePos], remote[filePos+1:], size, fileMode, time.Unix(modTime, 0)), nil
+	return f.newObject(remote[0:filePos], remote[filePos+1:], size, fileMode, modTime), nil
 }
 
 // Put in to the remote path with the modTime given of the given size
