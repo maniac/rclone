@@ -16,13 +16,9 @@ import (
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/plumbing/storer"
 	memory "github.com/go-git/go-git/v5/storage/memory"
 )
-
-var _ = (*git.Line)(nil)
-var _ = (*memory.IndexStorage)(nil)
-var _ = (*plumbing.Hash)(nil)
-var _ = (*object.Object)(nil)
 
 // Fs represents a git commit
 type Fs struct {
@@ -198,7 +194,7 @@ func (f *Fs) ListR(ctx context.Context, dir string, callback fs.ListRCallback) e
 		dirList := strings.Split(file.Name, "/")
 		dirCat := ""
 		for i := 1; i < len(dirList); i++ {
-			dirCat = dirList[i-1] + "/"
+			dirCat += dirList[i-1] + "/"
 			testDir := dirCat[0 : len(dirCat)-1]
 			if _, ok := dedupDir[testDir]; !ok {
 				dedupDir[testDir] = struct{}{}
@@ -353,20 +349,76 @@ func (o *Object) Remote() string {
 	return o.remote
 }
 
+func compareHash(test *object.Commit, h plumbing.Hash, path string) (bool, error) {
+	tree, err := test.Tree()
+	if err != nil {
+		return false, err
+	}
+	f, err := tree.FindEntry(path)
+	if err != nil {
+		if err == object.ErrEntryNotFound || err == object.ErrDirectoryNotFound {
+			return false, nil
+		}
+		return false, err
+	}
+	return f.Hash == h, nil
+}
+
+func quickSearchModifyCommit(curr *object.Commit, prev []*object.Commit, hash plumbing.Hash, path string) (*object.Commit, error) {
+	if len(prev) == 0 {
+		return curr, nil
+	}
+
+	mid := int(len(prev) / 2)
+	test := prev[mid]
+	eq, err := compareHash(test, hash, path)
+	if err != nil {
+		return nil, err
+	}
+
+	if eq {
+		return quickSearchModifyCommit(test, prev[mid+1:], hash, path)
+	}
+	return quickSearchModifyCommit(curr, prev[0:mid], hash, path)
+}
+
 // ModTime returns the modification date of the file
 // It should return a best guess if one isn't available
 func (o *Object) ModTime(_ context.Context) time.Time {
 	if o.fs.features.SlowModTime {
 		originalPath := strings.Trim(o.fs.root+"/"+o.name, "/")
-		ci, err := o.fs.repository.Log(&git.LogOptions{
-			From:     o.fs.commit.Hash,
-			FileName: &originalPath,
+		hash := o.content.Hash
+		lastCommit := o.fs.commit
+		history := object.NewCommitPostorderIter(lastCommit, nil)
+		prevSize := 128
+		prev := make([]*object.Commit, 0, prevSize)
+
+		err := history.ForEach(func(hc *object.Commit) error {
+			if len(prev) < cap(prev) {
+				prev = append(prev, hc)
+			} else if eq, err := compareHash(hc, hash, originalPath); err != nil {
+				return err
+			} else if eq {
+				// not in prev
+				lastCommit = hc
+				prev = prev[:0]
+			} else {
+				lastCommit, err = quickSearchModifyCommit(lastCommit, prev, hash, originalPath)
+				if err != nil {
+					return err
+				}
+				prev = prev[:0]
+				return storer.ErrStop
+			}
+			return nil
 		})
+
 		if err == nil {
-			defer ci.Close()
-			c, err := ci.Next()
+			if len(prev) > 0 {
+				lastCommit, err = quickSearchModifyCommit(lastCommit, prev, hash, originalPath)
+			}
 			if err == nil {
-				return c.Author.When
+				return lastCommit.Author.When
 			}
 		}
 	}
@@ -465,7 +517,7 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 
 // Removes this object
 func (o *Object) Remove(ctx context.Context) error {
-	return fs.ErrorPermissionDenied
+	return fs.ErrorNotDeleting
 }
 
 // Purge all files in the directory specified
@@ -519,7 +571,12 @@ func (f *Fs) DirMove(ctx context.Context, src fs.Fs, srcRemote string, dstRemote
 
 // About gets quota information from the Fs
 func (f *Fs) About(ctx context.Context) (*fs.Usage, error) {
-	return nil, fs.ErrorPermissionDenied
+	zero := int64(0)
+	return &fs.Usage{
+		Total: &zero,
+		Used:  &zero,
+		Free:  &zero,
+	}, nil
 }
 
 // PutStream uploads to the remote path with the modTime given of indeterminate size
