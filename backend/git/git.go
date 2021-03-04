@@ -48,8 +48,9 @@ type Object struct {
 }
 
 type Options struct {
-	RemoteURL string `config:"remote"`
-	Revision  string `config:"revision"`
+	RemoteURL  string `config:"remote"`
+	Revision   string `config:"revision"`
+	CommitTime bool   `config:"commit_time"`
 }
 
 // Register with Fs
@@ -67,6 +68,11 @@ func init() {
 			Help:     "revision string",
 			Required: false,
 			Default:  string(plumbing.HEAD),
+		}, {
+			Name:     "commit_time",
+			Help:     "Make modtime to last commit time",
+			Default:  false,
+			Required: false,
 		}},
 	}
 	fs.Register(fsi)
@@ -115,6 +121,7 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 
 	features := (&fs.Features{
 		CanHaveEmptyDirectories: false,
+		SlowModTime:             opt.CommitTime,
 	}).Fill(ctx, f)
 
 	f.features = features
@@ -349,6 +356,21 @@ func (o *Object) Remote() string {
 // ModTime returns the modification date of the file
 // It should return a best guess if one isn't available
 func (o *Object) ModTime(_ context.Context) time.Time {
+	if o.fs.features.SlowModTime {
+		originalPath := strings.Trim(o.fs.root+"/"+o.name, "/")
+		ci, err := o.fs.repository.Log(&git.LogOptions{
+			From:     o.fs.commit.Hash,
+			FileName: &originalPath,
+		})
+		if err == nil {
+			defer ci.Close()
+			c, err := ci.Next()
+			if err == nil {
+				return c.Author.When
+			}
+		}
+	}
+
 	return o.modTime
 }
 
@@ -378,9 +400,30 @@ func (o *Object) SetModTime(ctx context.Context, t time.Time) error {
 	return fs.ErrorPermissionDenied
 }
 
+type readCloser struct {
+	io.Reader
+}
+
+func (o *readCloser) Read(p []byte) (int, error) {
+	return o.Reader.Read(p)
+}
+
+func (o *readCloser) Close() error {
+	r := o.Reader
+	if l, ok := r.(*io.LimitedReader); ok {
+		// get original reader to call Close()
+		r = l.R
+	}
+
+	if c, ok := r.(io.Closer); ok {
+		return c.Close()
+	}
+	return nil
+}
+
 // Open opens the file for read.  Call Close() on the returned io.ReadCloser
 func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadCloser, error) {
-	buf, err := o.content.Contents()
+	reader, err := o.content.Reader()
 	if err != nil {
 		return nil, err
 	}
@@ -400,7 +443,15 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 		limit = o.size - offset
 	}
 
-	return ioutil.NopCloser(strings.NewReader(buf[offset:(offset + limit)])), nil
+	if offset > 0 {
+		_, err = io.CopyN(ioutil.Discard, reader, offset)
+		if err != nil {
+			reader.Close()
+			return nil, err
+		}
+	}
+
+	return &readCloser{io.LimitReader(reader, limit)}, nil
 }
 
 // Update in to the object with the modTime given of the given size
