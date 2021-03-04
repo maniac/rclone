@@ -382,44 +382,49 @@ func quickSearchModifyCommit(curr *object.Commit, prev []*object.Commit, hash pl
 	return quickSearchModifyCommit(curr, prev[0:mid], hash, path)
 }
 
+func trySearchModifyCommit(path string, hash plumbing.Hash, lastCommit *object.Commit, history object.CommitIter) (*object.Commit, error) {
+	prevSize := 128
+	prev := make([]*object.Commit, 0, prevSize)
+
+	err := history.ForEach(func(hc *object.Commit) error {
+		if len(prev) < cap(prev) {
+			prev = append(prev, hc)
+		} else if eq, err := compareHash(hc, hash, path); err != nil {
+			return err
+		} else if eq {
+			// not in prev
+			lastCommit = hc
+			prev = prev[:0]
+		} else {
+			lastCommit, err = quickSearchModifyCommit(lastCommit, prev, hash, path)
+			if err != nil {
+				return err
+			}
+			prev = prev[:0]
+			return storer.ErrStop
+		}
+		return nil
+	})
+
+	if err == nil {
+		if len(prev) > 0 {
+			lastCommit, err = quickSearchModifyCommit(lastCommit, prev, hash, path)
+		}
+	}
+	return lastCommit, err
+}
+
 // ModTime returns the modification date of the file
 // It should return a best guess if one isn't available
 func (o *Object) ModTime(_ context.Context) time.Time {
 	if o.fs.features.SlowModTime {
 		originalPath := strings.Trim(o.fs.root+"/"+o.name, "/")
 		hash := o.content.Hash
+		var err error
 		lastCommit := o.fs.commit
-		history := object.NewCommitPostorderIter(lastCommit, nil)
-		prevSize := 128
-		prev := make([]*object.Commit, 0, prevSize)
-
-		err := history.ForEach(func(hc *object.Commit) error {
-			if len(prev) < cap(prev) {
-				prev = append(prev, hc)
-			} else if eq, err := compareHash(hc, hash, originalPath); err != nil {
-				return err
-			} else if eq {
-				// not in prev
-				lastCommit = hc
-				prev = prev[:0]
-			} else {
-				lastCommit, err = quickSearchModifyCommit(lastCommit, prev, hash, originalPath)
-				if err != nil {
-					return err
-				}
-				prev = prev[:0]
-				return storer.ErrStop
-			}
-			return nil
-		})
-
+		lastCommit, err = trySearchModifyCommit(originalPath, hash, lastCommit, object.NewCommitPreorderIter(lastCommit, nil, nil))
 		if err == nil {
-			if len(prev) > 0 {
-				lastCommit, err = quickSearchModifyCommit(lastCommit, prev, hash, originalPath)
-			}
-			if err == nil {
-				return lastCommit.Author.When
-			}
+			return lastCommit.Author.When
 		}
 	}
 
