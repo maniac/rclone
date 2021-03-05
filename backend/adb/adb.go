@@ -389,6 +389,11 @@ func (o *Object) Storable() bool {
 
 // SetModTime sets the metadata on the object to set the modification date
 func (o *Object) SetModTime(ctx context.Context, t time.Time) error {
+	_, _, err := o.fs.runCommand("touch", "-m", "-d", t.Format("2006-01-02 15:04:05 -0700"), o.fs.root+"/"+o.remote)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
