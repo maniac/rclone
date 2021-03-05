@@ -213,6 +213,7 @@ func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err e
 		}
 
 		if (entry.Mode & os.ModeSymlink) != 0 {
+			// reslove symbolic links and get real stat
 			newMode, newSize, newModTime, err := f.tryStat(root + "/" + entry.Name)
 			if err == nil {
 				entry.Mode = newMode
@@ -234,11 +235,28 @@ func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err e
 	}
 
 	if len(allEntries) == 0 {
-		// for non-root user to access /data/local/tmp
+		// try to fill non-readable directories
 		if dir == "/data" {
 			allEntries = append(allEntries, fs.NewDir(strings.Trim(root+"/local", "/"), time.Now()))
+			allEntries = append(allEntries, fs.NewDir(strings.Trim(root+"/app", "/"), time.Now()))
 		} else if dir == "/data/local" {
 			allEntries = append(allEntries, fs.NewDir(strings.Trim(root+"/tmp", "/"), time.Now()))
+		} else if dir == "/data/app" || dir == "/system/vendor/app" || dir == "/vendor/overlay" {
+			ret, code, err := f.runCommand("pm", "list", "packages", "-f")
+			if err == nil && code == 0 {
+				dirPos := len(dir) + 8
+				for _, pack := range strings.Split(ret, "\n") {
+					// package:/data/app/.../...apk={package name}
+					if strings.HasPrefix(pack, "package:"+dir) {
+						dirEndPos := strings.LastIndex(pack, "/")
+						if dirEndPos != -1 && dirEndPos > dirPos {
+							allEntries = append(allEntries, fs.NewDir(strings.Trim(root+"/"+pack[dirPos:dirEndPos], "/"), time.Now()))
+						}
+					}
+				}
+			}
+		} else if dir == "/storage/emulated" {
+			allEntries = append(allEntries, fs.NewDir(strings.Trim(root+"/0", "/"), time.Now()))
 		}
 	}
 
