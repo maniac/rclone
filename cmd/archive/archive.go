@@ -68,7 +68,7 @@ Or like this to output any .txt files in dir or its subdirectories.
 
 				h := &tar.Header{
 					Typeflag:   tar.TypeReg,
-					Name:       o.String(),
+					Name:       o.Remote(),
 					Size:       o.Size(),
 					Mode:       0644,
 					ModTime:    o.ModTime(ctx),
