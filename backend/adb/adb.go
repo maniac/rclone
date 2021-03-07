@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"strconv"
 	"strings"
@@ -397,6 +396,68 @@ func (o *Object) SetModTime(ctx context.Context, t time.Time) error {
 	return nil
 }
 
+type adbFileReader struct {
+	o *Object
+	start int64
+	limit int64
+	buf []byte
+	bufPos int
+}
+
+func (a *adbFileReader) Read(p []byte) (n int, err error) {
+	if a.bufPos >= len(a.buf) {
+		if a.limit <= 0 {
+			return 0, io.EOF
+		}
+		blocksize := int64(2 * 1024 * 1024)
+		firstBlock := a.start / blocksize
+		lastBlock := (a.start + a.limit + blocksize - 1) / blocksize
+		if lastBlock > firstBlock + 1 {
+			lastBlock = firstBlock + 1
+		}
+		firstByte := a.start % blocksize
+
+		result, err := a.o.fs.device.RunCommand(
+			"dd",
+			"if="+a.o.fullpath(),
+			fmt.Sprintf("bs=%d", blocksize),
+			fmt.Sprintf("skip=%d", firstBlock),
+			fmt.Sprintf("count=%d", lastBlock-firstBlock),
+			"2>",
+			"/dev/null",
+		)
+
+		if err != nil {
+			return 0, err
+		}
+
+		endByte := firstByte + a.limit
+		if int(endByte) > len(result) {
+			endByte = int64(len(result))
+		}
+
+		readBytes := endByte - firstByte
+		a.start += readBytes
+		a.limit -= readBytes
+		buf := []byte(result)
+		a.buf = buf[firstByte:endByte]
+		a.bufPos = 0
+	}
+
+	readCount := len(a.buf) - a.bufPos
+	if readCount > len(p) {
+		readCount = len(p)
+	}
+
+	copy(p[0:readCount], a.buf[a.bufPos:(a.bufPos + readCount)])
+	a.bufPos += readCount
+	return readCount, nil
+}
+
+func (a *adbFileReader) Close() error {
+	return nil
+}
+
 // Open opens the file for read.  Call Close() on the returned io.ReadCloser
 func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadCloser, error) {
 	var offset, limit int64 = 0, o.size
@@ -419,26 +480,11 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 		return o.fs.device.OpenRead(o.fullpath())
 	}
 
-	blocksize := int64(65536)
-	firstBlock := int64(offset / blocksize)
-	lastBlock := int64((offset + limit + blocksize - 1) / blocksize)
-	if firstBlock < 0 {
-		firstBlock = 0
-	}
-
-	firstByte := offset - firstBlock*blocksize
-	result, err := o.fs.device.RunCommand(
-		"dd",
-		"if="+o.fullpath(),
-		fmt.Sprintf("bs=%d", blocksize),
-		fmt.Sprintf("skip=%d", firstBlock),
-		fmt.Sprintf("count=%d", lastBlock-firstBlock),
-	)
-
-	if err == nil {
-		return ioutil.NopCloser(strings.NewReader(result[firstByte:(firstByte + limit)])), nil
-	}
-	return nil, err
+	return &adbFileReader{
+		o:      o,
+		start:  offset,
+		limit:  limit,
+	}, nil
 }
 
 // Update in to the object with the modTime given of the given size
