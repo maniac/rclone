@@ -244,7 +244,7 @@ func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err e
 		} else if dir == "/data/app" || dir == "/system/vendor/app" || dir == "/vendor/overlay" {
 			ret, code, err := f.runCommand("pm", "list", "packages", "-f")
 			if err == nil && code == 0 {
-				dirPos := len(dir) + 8
+				dirPos := len(dir) + 9
 				for _, pack := range strings.Split(ret, "\n") {
 					// package:/data/app/.../...apk={package name}
 					if strings.HasPrefix(pack, "package:"+dir) {
