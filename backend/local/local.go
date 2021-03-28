@@ -42,8 +42,9 @@ func init() {
 		NewFs:       NewFs,
 		CommandHelp: commandHelp,
 		Options: []fs.Option{{
-			Name: "nounc",
-			Help: "Disable UNC (long path names) conversion on Windows",
+			Name:     "nounc",
+			Help:     "Disable UNC (long path names) conversion on Windows",
+			Advanced: runtime.GOOS != "windows",
 			Examples: []fs.OptionExample{{
 				Value: "true",
 				Help:  "Disables long file names",
@@ -1144,6 +1145,10 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 			err = file.PreAllocate(src.Size(), f)
 			if err != nil {
 				fs.Debugf(o, "Failed to pre-allocate: %v", err)
+				if err == file.ErrDiskFull {
+					_ = f.Close()
+					return err
+				}
 			}
 		}
 		out = f

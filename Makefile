@@ -93,7 +93,7 @@ build_dep:
 
 # Get the release dependencies we only install on linux
 release_dep_linux:
-	cd /tmp && go get github.com/goreleaser/nfpm/v2/...
+	go run bin/get-github-release.go -extract nfpm goreleaser/nfpm 'nfpm_.*_Linux_x86_64\.tar\.gz'
 
 # Get the release dependencies we only install on Windows
 release_dep_windows:
@@ -119,7 +119,7 @@ doc:	rclone.1 MANUAL.html MANUAL.txt rcdocs commanddocs
 rclone.1:	MANUAL.md
 	pandoc -s --from markdown-smart --to man MANUAL.md -o rclone.1
 
-MANUAL.md:	bin/make_manual.py docs/content/*.md commanddocs backenddocs
+MANUAL.md:	bin/make_manual.py docs/content/*.md commanddocs backenddocs rcdocs
 	./bin/make_manual.py
 
 MANUAL.html:	MANUAL.md
@@ -187,10 +187,10 @@ upload_github:
 	./bin/upload-github $(TAG)
 
 cross:	doc
-	go run bin/cross-compile.go -release current $(BUILDTAGS) $(BUILD_ARGS) $(TAG)
+	go run bin/cross-compile.go -release current $(BUILD_FLAGS) $(BUILDTAGS) $(BUILD_ARGS) $(TAG)
 
 beta:
-	go run bin/cross-compile.go $(BUILDTAGS) $(BUILD_ARGS) $(TAG)
+	go run bin/cross-compile.go $(BUILD_FLAGS) $(BUILDTAGS) $(BUILD_ARGS) $(TAG)
 	rclone -v copy build/ memstore:pub-rclone-org/$(TAG)
 	@echo Beta release ready at https://pub.rclone.org/$(TAG)/
 
@@ -198,7 +198,7 @@ log_since_last_release:
 	git log $(LAST_TAG)..
 
 compile_all:
-	go run bin/cross-compile.go -compile-only $(BUILDTAGS) $(BUILD_ARGS) $(TAG)
+	go run bin/cross-compile.go -compile-only $(BUILD_FLAGS) $(BUILDTAGS) $(BUILD_ARGS) $(TAG)
 
 ci_upload:
 	sudo chown -R $$USER build

@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/rclone/rclone/fs"
+	"github.com/rclone/rclone/fs/filter"
 	"github.com/rclone/rclone/lib/cache"
 )
 
@@ -101,7 +102,14 @@ func Unpin(f fs.Fs) {
 
 // Get gets an fs.Fs named fsString either from the cache or creates it afresh
 func Get(ctx context.Context, fsString string) (f fs.Fs, err error) {
-	return GetFn(ctx, fsString, fs.NewFs)
+	// If we are making a long lived backend which lives longer
+	// than this request, we want to disconnect it from the
+	// current context and in particular any WithCancel contexts,
+	// but we want to preserve the config embedded in the context.
+	newCtx := context.Background()
+	newCtx = fs.CopyConfig(newCtx, ctx)
+	newCtx = filter.CopyConfig(newCtx, ctx)
+	return GetFn(newCtx, fsString, fs.NewFs)
 }
 
 // GetArr gets []fs.Fs from []fsStrings either from the cache or creates it afresh
@@ -124,7 +132,19 @@ func Put(fsString string, f fs.Fs) {
 	addMapping(fsString, canonicalName)
 }
 
+// ClearConfig deletes all entries which were based on the config name passed in
+//
+// Returns number of entries deleted
+func ClearConfig(name string) (deleted int) {
+	return c.DeletePrefix(name + ":")
+}
+
 // Clear removes everything from the cache
 func Clear() {
 	c.Clear()
+}
+
+// Entries returns the number of entries in the cache
+func Entries() int {
+	return c.Entries()
 }

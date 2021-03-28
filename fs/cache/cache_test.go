@@ -166,6 +166,22 @@ func TestPin(t *testing.T) {
 	Unpin(f2)
 }
 
+func TestClearConfig(t *testing.T) {
+	cleanup, create := mockNewFs(t)
+	defer cleanup()
+
+	assert.Equal(t, 0, c.Entries())
+
+	_, err := GetFn(context.Background(), "mock:/file.txt", create)
+	require.Equal(t, fs.ErrorIsFile, err)
+
+	assert.Equal(t, 2, Entries()) // file + parent
+
+	assert.Equal(t, 2, ClearConfig("mock"))
+
+	assert.Equal(t, 0, Entries())
+}
+
 func TestClear(t *testing.T) {
 	cleanup, create := mockNewFs(t)
 	defer cleanup()
@@ -179,4 +195,17 @@ func TestClear(t *testing.T) {
 	Clear()
 
 	assert.Equal(t, 0, c.Entries())
+}
+
+func TestEntries(t *testing.T) {
+	cleanup, create := mockNewFs(t)
+	defer cleanup()
+
+	assert.Equal(t, 0, Entries())
+
+	// Create something
+	_, err := GetFn(context.Background(), "mock:/", create)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, Entries())
 }
