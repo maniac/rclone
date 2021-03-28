@@ -162,7 +162,7 @@ func (f *Fs) newObject(root string, name string, size int64, mode os.FileMode, m
 
 func (f *Fs) tryStat(path string) (os.FileMode, int64, time.Time, error) {
 	file := "/" + strings.Trim(f.root+"/"+path, "/")
-	ret, code, err := f.runCommand("stat", "-L", "-c", "%f %s %Y", "$F")
+	ret, code, err := f.runCommand("stat", "-L", "-c", "%f %s %Y", file)
 	if err != nil {
 		return 0, 0, time.Time{}, err
 	}
