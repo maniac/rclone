@@ -46,7 +46,7 @@ require (
 	github.com/nsf/termbox-go v0.0.0-20210114135735-d04385b850e8
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/pkg/errors v0.9.1
-	github.com/pkg/sftp v1.13.0
+	github.com/pkg/sftp v1.12.0
 	github.com/prometheus/client_golang v1.9.0
 	github.com/prometheus/procfs v0.3.0 // indirect
 	github.com/putdotio/go-putio/putio v0.0.0-20200123120452-16d982cac2b8
@@ -54,6 +54,7 @@ require (
 	github.com/rivo/uniseg v0.2.0 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/sevlyar/go-daemon v0.1.5
+	github.com/shirou/gopsutil/v3 v3.21.3
 	github.com/sirupsen/logrus v1.7.0
 	github.com/skratchdot/open-golang v0.0.0-20200116055534-eef842397966
 	github.com/spf13/cobra v1.1.1

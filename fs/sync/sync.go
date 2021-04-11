@@ -155,7 +155,9 @@ func newSyncCopyMove(ctx context.Context, fdst, fsrc fs.Fs, deleteMode fs.Delete
 	// Input context - cancel this for graceful stop
 	s.inCtx, s.inCancel = context.WithCancel(s.ctx)
 	if s.noTraverse && s.deleteMode != fs.DeleteModeOff {
-		fs.Errorf(nil, "Ignoring --no-traverse with sync")
+		if !fi.HaveFilesFrom() {
+			fs.Errorf(nil, "Ignoring --no-traverse with sync")
+		}
 		s.noTraverse = false
 	}
 	s.trackRenamesStrategy, err = parseTrackRenamesStrategy(ci.TrackRenamesStrategy)
@@ -264,6 +266,9 @@ func (s *syncCopyMove) processError(err error) {
 			// Cancel the march and stop the pipes
 			s.inCancel()
 		}
+	} else if err == context.Canceled && s.inCtx.Err() != nil {
+		// Ignore context Canceled if we have called s.inCancel()
+		return
 	}
 	s.errorMu.Lock()
 	defer s.errorMu.Unlock()

@@ -197,6 +197,21 @@ memory.  It can be set smaller if you are tight on memory.
 
 Impersonate this user when using a business account.
 
+Note that if you want to use impersonate, you should make sure this
+flag is set when running "rclone config" as this will cause rclone to
+request the "members.read" scope which it won't normally. This is
+needed to lookup a members email address into the internal ID that
+dropbox uses in the API.
+
+Using the "members.read" scope will require a Dropbox Team Admin
+to approve during the OAuth flow.
+
+You will have to use your own App (setting your own client_id and
+client_secret) to use this option as currently rclone's default set of
+permissions doesn't include "members.read". This can be added once
+v1.55 or later is in use everywhere.
+
+
 - Config:      impersonate
 - Env Var:     RCLONE_DROPBOX_IMPERSONATE
 - Type:        string
@@ -269,6 +284,12 @@ If you have more than 10,000 files in a directory then `rclone purge
 dropbox:dir` will return the error `Failed to purge: There are too
 many files involved in this operation`.  As a work-around do an
 `rclone delete dropbox:dir` followed by an `rclone rmdir dropbox:dir`.
+
+When using `rclone link` you'll need to set `--expire` if using a
+non-personal account otherwise the visibility may not be correct.
+(Note that `--expire` isn't supported on personal accounts). See the
+[forum discussion](https://forum.rclone.org/t/rclone-link-dropbox-permissions/23211) and the 
+[dropbox SDK issue](https://github.com/dropbox/dropbox-sdk-go-unofficial/issues/75).
 
 ### Get your own Dropbox App ID ###
 

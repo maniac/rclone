@@ -476,3 +476,6 @@ put them back in again.` >}}
   * Naveen Honest Raj <naveendurai19@gmail.com>
   * Lucas Messenger <lmesseng@cisco.com>
   * Manish Kumar <krmanish260@gmail.com>
+  * x0b <x0bdev@gmail.com>
+  * CERN through the CS3MESH4EOSC Project
+  * Nick Gaya <nicholasgaya+github@gmail.com>

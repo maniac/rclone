@@ -96,6 +96,11 @@ func init() {
 					log.Fatalf("Failed to configure token: %v", err)
 				}
 			}
+
+			if fs.GetConfig(ctx).AutoConfirm {
+				return
+			}
+
 			if err = setupRoot(ctx, name, m); err != nil {
 				log.Fatalf("Failed to configure root directory: %v", err)
 			}
@@ -161,7 +166,7 @@ type Object struct {
 
 func setupRegion(m configmap.Mapper) {
 	region, ok := m.Get("region")
-	if !ok {
+	if !ok || region == "" {
 		log.Fatalf("No region set\n")
 	}
 	rootURL = fmt.Sprintf("https://workdrive.zoho.%s/api/v1", region)
@@ -647,7 +652,7 @@ func (f *Fs) upload(ctx context.Context, name string, parent string, size int64,
 	params.Set("filename", name)
 	params.Set("parent_id", parent)
 	params.Set("override-name-exist", strconv.FormatBool(true))
-	formReader, contentType, overhead, err := rest.MultipartUpload(in, nil, "content", name)
+	formReader, contentType, overhead, err := rest.MultipartUpload(ctx, in, nil, "content", name)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to make multipart upload")
 	}

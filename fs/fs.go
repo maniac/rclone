@@ -125,6 +125,38 @@ func (os Options) Get(name string) *Option {
 	return nil
 }
 
+// Overridden discovers which config items have been overridden in the
+// configmap passed in, either by the config string, command line
+// flags or environment variables
+func (os Options) Overridden(m *configmap.Map) configmap.Simple {
+	var overridden = configmap.Simple{}
+	for i := range os {
+		opt := &os[i]
+		value, isSet := m.GetPriority(opt.Name, configmap.PriorityNormal)
+		if isSet {
+			overridden.Set(opt.Name, value)
+		}
+	}
+	return overridden
+}
+
+// NonDefault discovers which config values aren't at their default
+func (os Options) NonDefault(m configmap.Getter) configmap.Simple {
+	var nonDefault = configmap.Simple{}
+	for i := range os {
+		opt := &os[i]
+		value, isSet := m.Get(opt.Name)
+		if !isSet {
+			continue
+		}
+		defaultValue := fmt.Sprint(opt.Default)
+		if value != defaultValue {
+			nonDefault.Set(opt.Name, value)
+		}
+	}
+	return nonDefault
+}
+
 // OptionVisibility controls whether the options are visible in the
 // configurator or the command line.
 type OptionVisibility byte
@@ -1321,28 +1353,28 @@ func ConfigMap(fsInfo *RegInfo, configName string, connectionStringConfig config
 
 	// Config from connection string
 	if len(connectionStringConfig) > 0 {
-		config.AddOverrideGetter(connectionStringConfig)
+		config.AddGetter(connectionStringConfig, configmap.PriorityNormal)
 	}
 
 	// flag values
 	if fsInfo != nil {
-		config.AddOverrideGetter(&regInfoValues{fsInfo, false})
+		config.AddGetter(&regInfoValues{fsInfo, false}, configmap.PriorityNormal)
 	}
 
 	// remote specific environment vars
-	config.AddOverrideGetter(configEnvVars(configName))
+	config.AddGetter(configEnvVars(configName), configmap.PriorityNormal)
 
 	// backend specific environment vars
 	if fsInfo != nil {
-		config.AddOverrideGetter(optionEnvVars{fsInfo: fsInfo})
+		config.AddGetter(optionEnvVars{fsInfo: fsInfo}, configmap.PriorityNormal)
 	}
 
 	// config file
-	config.AddGetter(getConfigFile(configName))
+	config.AddGetter(getConfigFile(configName), configmap.PriorityConfig)
 
 	// default values
 	if fsInfo != nil {
-		config.AddGetter(&regInfoValues{fsInfo, true})
+		config.AddGetter(&regInfoValues{fsInfo, true}, configmap.PriorityDefault)
 	}
 
 	// Set Config
@@ -1381,17 +1413,7 @@ func NewFs(ctx context.Context, path string) (Fs, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Now discover which config items have been overridden,
-	// either by the config string, command line flags or
-	// environment variables
-	var overridden = configmap.Simple{}
-	for i := range fsInfo.Options {
-		opt := &fsInfo.Options[i]
-		value, isSet := config.GetOverride(opt.Name)
-		if isSet {
-			overridden.Set(opt.Name, value)
-		}
-	}
+	overridden := fsInfo.Options.Overridden(config)
 	if len(overridden) > 0 {
 		extraConfig := overridden.String()
 		//Debugf(nil, "detected overriden config %q", extraConfig)

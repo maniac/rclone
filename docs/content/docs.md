@@ -654,7 +654,7 @@ If you run `rclone config file` you will see where the default
 location is for you.
 
 Use this flag to override the config location, e.g. `rclone
---config=".myconfig" .config`.
+--config=".myconfig" config`.
 
 If the location is set to empty string `""` or the special value
 `/notfound`, or the os null device represented by value `NUL` on
@@ -786,6 +786,27 @@ triggering follow-on actions if data was copied, or skipping if not.
 
 NB: Enabling this option turns a usually non-fatal error into a potentially
 fatal one - please check and adjust your scripts accordingly!
+
+### --fs-cache-expire-duration=TIME
+
+When using rclone via the API rclone caches created remotes for 5
+minutes by default in the "fs cache". This means that if you do
+repeated actions on the same remote then rclone won't have to build it
+again from scratch, which makes it more efficient.
+
+This flag sets the time that the remotes are cached for. If you set it
+to `0` (or negative) then rclone won't cache the remotes at all.
+
+Note that if you use some flags, eg `--backup-dir` and if this is set
+to `0` rclone may build two remotes (one for the source or destination
+and one for the `--backup-dir` where it may have only built one
+before.
+
+### --fs-cache-expire-interval=TIME
+
+This controls how often rclone checks for cached remotes to expire.
+See the `--fs-cache-expire-duration` documentation above for more
+info. The default is 60s, set to 0 to disable expiry.
 
 ### --header ###
 
@@ -2098,7 +2119,7 @@ mys3:
 Note that if you want to create a remote using environment variables
 you must create the `..._TYPE` variable as above.
 
-Note also that now rclone has [connectionstrings](#connection-strings),
+Note also that now rclone has [connection strings](#connection-strings),
 it is probably easier to use those instead which makes the above example
 
     rclone lsd :s3,access_key_id=XXX,secret_access_key=XXX:
