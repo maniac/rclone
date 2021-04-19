@@ -22,12 +22,14 @@ import (
 	"github.com/rclone/rclone/fs/config/obscure"
 	"github.com/rclone/rclone/fs/fspath"
 	"github.com/rclone/rclone/fs/rc"
+	"github.com/rclone/rclone/lib/file"
 	"github.com/rclone/rclone/lib/random"
 )
 
 const (
 	configFileName       = "rclone.conf"
 	hiddenConfigFileName = "." + configFileName
+	noConfigFile         = "notfound"
 
 	// ConfigToken is the key used to store the token under
 	ConfigToken = "token"
@@ -107,72 +109,140 @@ var (
 	// and any parents.
 	CacheDir = makeCacheDir()
 
-	// ConfigPath points to the config file
-	ConfigPath = makeConfigPath()
-
 	// Password can be used to configure the random password generator
 	Password = random.Password
 )
+
+var configPath string
 
 func init() {
 	// Set the function pointers up in fs
 	fs.ConfigFileGet = FileGetFlag
 	fs.ConfigFileSet = SetValueAndSave
+	configPath = makeConfigPath()
+}
+
+// Join directory with filename, and check if exists
+func findFile(dir string, name string) string {
+	path := filepath.Join(dir, name)
+	if _, err := os.Stat(path); err != nil {
+		return ""
+	}
+	return path
+}
+
+// Find current user's home directory
+func findHomeDir() (string, error) {
+	path, err := homedir.Dir()
+	if err != nil {
+		fs.Debugf(nil, "Home directory lookup failed and cannot be used as configuration location: %v", err)
+	} else if path == "" {
+		// On Unix homedir return success but empty string for user with empty home configured in passwd file
+		fs.Debugf(nil, "Home directory not defined and cannot be used as configuration location")
+	}
+	return path, err
+}
+
+// Find rclone executable directory and look for existing rclone.conf there
+// (<rclone_exe_dir>/rclone.conf)
+func findLocalConfig() (configDir string, configFile string) {
+	if exePath, err := os.Executable(); err == nil {
+		configDir = filepath.Dir(exePath)
+		configFile = findFile(configDir, configFileName)
+	}
+	return
+}
+
+// Get path to Windows AppData config subdirectory for rclone and look for existing rclone.conf there
+// ($AppData/rclone/rclone.conf)
+func findAppDataConfig() (configDir string, configFile string) {
+	if appDataDir := os.Getenv("APPDATA"); appDataDir != "" {
+		configDir = filepath.Join(appDataDir, "rclone")
+		configFile = findFile(configDir, configFileName)
+	} else {
+		fs.Debugf(nil, "Environment variable APPDATA is not defined and cannot be used as configuration location")
+	}
+	return
+}
+
+// Get path to XDG config subdirectory for rclone and look for existing rclone.conf there
+// (see XDG Base Directory specification: https://specifications.freedesktop.org/basedir-spec/latest/).
+// ($XDG_CONFIG_HOME\rclone\rclone.conf)
+func findXDGConfig() (configDir string, configFile string) {
+	if xdgConfigDir := os.Getenv("XDG_CONFIG_HOME"); xdgConfigDir != "" {
+		configDir = filepath.Join(xdgConfigDir, "rclone")
+		configFile = findFile(configDir, configFileName)
+	}
+	return
+}
+
+// Get path to .config subdirectory for rclone and look for existing rclone.conf there
+// (~/.config/rclone/rclone.conf)
+func findDotConfigConfig(home string) (configDir string, configFile string) {
+	if home != "" {
+		configDir = filepath.Join(home, ".config", "rclone")
+		configFile = findFile(configDir, configFileName)
+	}
+	return
+}
+
+// Look for existing .rclone.conf (legacy hidden filename) in root of user's home directory
+// (~/.rclone.conf)
+func findOldHomeConfig(home string) (configDir string, configFile string) {
+	if home != "" {
+		configDir = home
+		configFile = findFile(home, hiddenConfigFileName)
+	}
+	return
 }
 
 // Return the path to the configuration file
 func makeConfigPath() string {
-	// Use rclone.conf from rclone executable directory if already existing
-	exe, err := os.Executable()
-	if err == nil {
-		exedir := filepath.Dir(exe)
-		cfgpath := filepath.Join(exedir, configFileName)
-		_, err := os.Stat(cfgpath)
-		if err == nil {
-			return cfgpath
+	// Look for existing rclone.conf in prioritized list of known locations
+	// Also get configuration directory to use for new config file when no existing is found.
+	var (
+		configFile        string
+		configDir         string
+		primaryConfigDir  string
+		fallbackConfigDir string
+	)
+	// <rclone_exe_dir>/rclone.conf
+	if _, configFile = findLocalConfig(); configFile != "" {
+		return configFile
+	}
+	// Windows: $AppData/rclone/rclone.conf
+	// This is also the default location for new config when no existing is found
+	if runtime.GOOS == "windows" {
+		if primaryConfigDir, configFile = findAppDataConfig(); configFile != "" {
+			return configFile
 		}
 	}
-
-	// Find user's home directory
-	homeDir, err := homedir.Dir()
-
-	// Find user's configuration directory.
-	// Prefer XDG config path, with fallback to $HOME/.config.
-	// See XDG Base Directory specification
-	// https://specifications.freedesktop.org/basedir-spec/latest/),
-	xdgdir := os.Getenv("XDG_CONFIG_HOME")
-	var cfgdir string
-	if xdgdir != "" {
-		// User's configuration directory for rclone is $XDG_CONFIG_HOME/rclone
-		cfgdir = filepath.Join(xdgdir, "rclone")
-	} else if homeDir != "" {
-		// User's configuration directory for rclone is $HOME/.config/rclone
-		cfgdir = filepath.Join(homeDir, ".config", "rclone")
+	// $XDG_CONFIG_HOME/rclone/rclone.conf
+	// Also looking for this on Windows, for backwards compatibility reasons.
+	if configDir, configFile = findXDGConfig(); configFile != "" {
+		return configFile
+	}
+	if runtime.GOOS != "windows" {
+		// On Unix this is also the default location for new config when no existing is found
+		primaryConfigDir = configDir
+	}
+	// ~/.config/rclone/rclone.conf
+	// This is also the fallback location for new config
+	// (when $AppData on Windows and $XDG_CONFIG_HOME on Unix is not defined)
+	homeDir, homeDirErr := findHomeDir()
+	if fallbackConfigDir, configFile = findDotConfigConfig(homeDir); configFile != "" {
+		return configFile
+	}
+	// ~/.rclone.conf
+	if _, configFile = findOldHomeConfig(homeDir); configFile != "" {
+		return configFile
 	}
 
-	// Use rclone.conf from user's configuration directory if already existing
-	var cfgpath string
-	if cfgdir != "" {
-		cfgpath = filepath.Join(cfgdir, configFileName)
-		_, err := os.Stat(cfgpath)
-		if err == nil {
-			return cfgpath
-		}
-	}
-
-	// Use .rclone.conf from user's home directory if already existing
-	var homeconf string
-	if homeDir != "" {
-		homeconf = filepath.Join(homeDir, hiddenConfigFileName)
-		_, err := os.Stat(homeconf)
-		if err == nil {
-			return homeconf
-		}
-	}
-
-	// Check to see if user supplied a --config variable or environment
-	// variable.  We can't use pflag for this because it isn't initialised
-	// yet so we search the command line manually.
+	// No existing config file found, prepare proper default for a new one.
+	// But first check if if user supplied a --config variable or environment
+	// variable, since then we skip actually trying to create the default
+	// and report any errors related to it (we can't use pflag for this because
+	// it isn't initialised yet so we search the command line manually).
 	_, configSupplied := os.LookupEnv("RCLONE_CONFIG")
 	if !configSupplied {
 		for _, item := range os.Args {
@@ -182,48 +252,97 @@ func makeConfigPath() string {
 			}
 		}
 	}
-
-	// If user's configuration directory was found, then try to create it
-	// and assume rclone.conf can be written there. If user supplied config
-	// then skip creating the directory since it will not be used.
-	if cfgpath != "" {
-		// cfgpath != "" implies cfgdir != ""
+	// If we found a configuration directory to be used for new config during search
+	// above, then create it to be ready for rclone.conf file to be written into it
+	// later, and also as a test of permissions to use fallback if not even able to
+	// create the directory.
+	if primaryConfigDir != "" {
+		configDir = primaryConfigDir
+	} else if fallbackConfigDir != "" {
+		configDir = fallbackConfigDir
+	} else {
+		configDir = ""
+	}
+	if configDir != "" {
+		configFile = filepath.Join(configDir, configFileName)
 		if configSupplied {
-			return cfgpath
+			// User supplied custom config option, just return the default path
+			// as is without creating any directories, since it will not be used
+			// anyway and we don't want to unnecessarily create empty directory.
+			return configFile
 		}
-		err := os.MkdirAll(cfgdir, os.ModePerm)
-		if err == nil {
-			return cfgpath
+		var mkdirErr error
+		if mkdirErr = os.MkdirAll(configDir, os.ModePerm); mkdirErr == nil {
+			return configFile
+		}
+		// Problem: Try a fallback location. If we did find a home directory then
+		// just assume file .rclone.conf (legacy hidden filename) can be written in
+		// its root (~/.rclone.conf).
+		if homeDir != "" {
+			fs.Debugf(nil, "Configuration directory could not be created and will not be used: %v", mkdirErr)
+			return filepath.Join(homeDir, hiddenConfigFileName)
+		}
+		if !configSupplied {
+			fs.Errorf(nil, "Couldn't find home directory nor create configuration directory: %v", mkdirErr)
+		}
+	} else if !configSupplied {
+		if homeDirErr != nil {
+			fs.Errorf(nil, "Couldn't find configuration directory nor home directory: %v", homeDirErr)
+		} else {
+			fs.Errorf(nil, "Couldn't find configuration directory nor home directory")
 		}
 	}
-
-	// Assume .rclone.conf can be written to user's home directory.
-	if homeconf != "" {
-		return homeconf
-	}
-
-	// Default to ./.rclone.conf (current working directory) if everything else fails.
+	// No known location that can be used: Did possibly find a configDir
+	// (XDG_CONFIG_HOME or APPDATA) which couldn't be created, but in any case
+	// did not find a home directory!
+	// Report it as an error, and return as last resort the path relative to current
+	// working directory, of .rclone.conf (legacy hidden filename).
 	if !configSupplied {
-		fs.Errorf(nil, "Couldn't find home directory or read HOME or XDG_CONFIG_HOME environment variables.")
 		fs.Errorf(nil, "Defaulting to storing config in current directory.")
 		fs.Errorf(nil, "Use --config flag to workaround.")
-		fs.Errorf(nil, "Error was: %v", err)
 	}
 	return hiddenConfigFileName
+}
+
+// GetConfigPath returns the current config file path
+func GetConfigPath() string {
+	return configPath
+}
+
+// SetConfigPath sets new config file path
+//
+// Checks for empty string, os null device, or special path, all of which indicates in-memory config.
+func SetConfigPath(path string) (err error) {
+	var cfgPath string
+	if path == "" || path == os.DevNull {
+		cfgPath = ""
+	} else if filepath.Base(path) == noConfigFile {
+		cfgPath = ""
+	} else if err = file.IsReserved(path); err != nil {
+		return err
+	} else if cfgPath, err = filepath.Abs(path); err != nil {
+		return err
+	}
+	configPath = cfgPath
+	return nil
 }
 
 // LoadConfig loads the config file
 func LoadConfig(ctx context.Context) {
 	// Set RCLONE_CONFIG_DIR for backend config and subprocesses
-	_ = os.Setenv("RCLONE_CONFIG_DIR", filepath.Dir(ConfigPath))
-
-	// Load configuration file.
+	// If empty configPath (in-memory only) the value will be "."
+	_ = os.Setenv("RCLONE_CONFIG_DIR", filepath.Dir(configPath))
+	// Load configuration from file (or initialize sensible default if no file or error)
 	if err := Data.Load(); err == ErrorConfigFileNotFound {
-		fs.Logf(nil, "Config file %q not found - using defaults", ConfigPath)
+		if configPath == "" {
+			fs.Debugf(nil, "Config is memory-only - using defaults")
+		} else {
+			fs.Logf(nil, "Config file %q not found - using defaults", configPath)
+		}
 	} else if err != nil {
-		log.Fatalf("Failed to load config file %q: %v", ConfigPath, err)
+		log.Fatalf("Failed to load config file %q: %v", configPath, err)
 	} else {
-		fs.Debugf(nil, "Using config file from %q", ConfigPath)
+		fs.Debugf(nil, "Using config file from %q", configPath)
 	}
 }
 
@@ -233,6 +352,10 @@ var ErrorConfigFileNotFound = errors.New("config file not found")
 // SaveConfig calling function which saves configuration file.
 // if SaveConfig returns error trying again after sleep.
 func SaveConfig() {
+	if configPath == "" {
+		fs.Debugf(nil, "Skipping save for memory-only config")
+		return
+	}
 	ctx := context.Background()
 	ci := fs.GetConfig(ctx)
 	var err error
@@ -244,7 +367,6 @@ func SaveConfig() {
 		time.Sleep(time.Duration(waitingTimeMs) * time.Millisecond)
 	}
 	fs.Errorf(nil, "Failed to save config after %d tries: %v", ci.LowLevelRetries, err)
-	return
 }
 
 // SetValueAndSave sets the key to the value and saves just that
