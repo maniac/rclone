@@ -36,15 +36,15 @@ func testConfigFile(t *testing.T, configFileName string) func() {
 	oldOsStdout := os.Stdout
 	oldConfigPath := config.GetConfigPath()
 	oldConfig := *ci
-	oldConfigFile := config.Data
+	oldConfigFile := config.Data()
 	oldReadLine := config.ReadLine
 	oldPassword := config.Password
 	os.Stdout = nil
 	assert.NoError(t, config.SetConfigPath(path))
 	ci = &fs.ConfigInfo{}
 
-	configfile.LoadConfig(ctx)
-	assert.Equal(t, []string{}, config.Data.GetSectionList())
+	configfile.Install()
+	assert.Equal(t, []string{}, config.Data().GetSectionList())
 
 	// Fake a remote
 	fs.Register(&fs.RegInfo{
@@ -73,7 +73,7 @@ func testConfigFile(t *testing.T, configFileName string) func() {
 		config.ReadLine = oldReadLine
 		config.Password = oldPassword
 		*ci = oldConfig
-		config.Data = oldConfigFile
+		config.SetData(oldConfigFile)
 
 		_ = os.Unsetenv("_RCLONE_CONFIG_KEY_FILE")
 		_ = os.Unsetenv("RCLONE_CONFIG_PASS")
@@ -103,9 +103,9 @@ func TestCRUD(t *testing.T) {
 		"secret",             // repeat
 		"y",                  // looks good, save
 	})
-	config.NewRemote(ctx, "test")
+	require.NoError(t, config.NewRemote(ctx, "test"))
 
-	assert.Equal(t, []string{"test"}, config.Data.GetSectionList())
+	assert.Equal(t, []string{"test"}, config.Data().GetSectionList())
 	assert.Equal(t, "config_test_remote", config.FileGet("test", "type"))
 	assert.Equal(t, "true", config.FileGet("test", "bool"))
 	assert.Equal(t, "secret", obscure.MustReveal(config.FileGet("test", "pass")))
@@ -118,14 +118,14 @@ func TestCRUD(t *testing.T) {
 	})
 	config.RenameRemote("test")
 
-	assert.Equal(t, []string{"asdf"}, config.Data.GetSectionList())
+	assert.Equal(t, []string{"asdf"}, config.Data().GetSectionList())
 	assert.Equal(t, "config_test_remote", config.FileGet("asdf", "type"))
 	assert.Equal(t, "true", config.FileGet("asdf", "bool"))
 	assert.Equal(t, "secret", obscure.MustReveal(config.FileGet("asdf", "pass")))
 
 	// delete remote
 	config.DeleteRemote("asdf")
-	assert.Equal(t, []string{}, config.Data.GetSectionList())
+	assert.Equal(t, []string{}, config.Data().GetSectionList())
 }
 
 func TestChooseOption(t *testing.T) {
@@ -146,7 +146,7 @@ func TestChooseOption(t *testing.T) {
 		assert.Equal(t, 1024, bits)
 		return "not very random password", nil
 	}
-	config.NewRemote(ctx, "test")
+	require.NoError(t, config.NewRemote(ctx, "test"))
 
 	assert.Equal(t, "false", config.FileGet("test", "bool"))
 	assert.Equal(t, "not very random password", obscure.MustReveal(config.FileGet("test", "pass")))
@@ -158,7 +158,7 @@ func TestChooseOption(t *testing.T) {
 		"n",                  // not required
 		"y",                  // looks good, save
 	})
-	config.NewRemote(ctx, "test")
+	require.NoError(t, config.NewRemote(ctx, "test"))
 
 	assert.Equal(t, "true", config.FileGet("test", "bool"))
 	assert.Equal(t, "", config.FileGet("test", "pass"))
@@ -175,7 +175,7 @@ func TestNewRemoteName(t *testing.T) {
 		"n",                  // not required
 		"y",                  // looks good, save
 	})
-	config.NewRemote(ctx, "test")
+	require.NoError(t, config.NewRemote(ctx, "test"))
 
 	config.ReadLine = makeReadLine([]string{
 		"test",           // already exists
@@ -202,7 +202,7 @@ func TestCreateUpdatePasswordRemote(t *testing.T) {
 					"pass": "potato",
 				}, doObscure, noObscure))
 
-				assert.Equal(t, []string{"test2"}, config.Data.GetSectionList())
+				assert.Equal(t, []string{"test2"}, config.Data().GetSectionList())
 				assert.Equal(t, "config_test_remote", config.FileGet("test2", "type"))
 				assert.Equal(t, "true", config.FileGet("test2", "bool"))
 				gotPw := config.FileGet("test2", "pass")
@@ -218,7 +218,7 @@ func TestCreateUpdatePasswordRemote(t *testing.T) {
 					"spare": "spare",
 				}, doObscure, noObscure))
 
-				assert.Equal(t, []string{"test2"}, config.Data.GetSectionList())
+				assert.Equal(t, []string{"test2"}, config.Data().GetSectionList())
 				assert.Equal(t, "config_test_remote", config.FileGet("test2", "type"))
 				assert.Equal(t, "false", config.FileGet("test2", "bool"))
 				gotPw = config.FileGet("test2", "pass")
@@ -231,7 +231,7 @@ func TestCreateUpdatePasswordRemote(t *testing.T) {
 					"pass": "potato3",
 				}))
 
-				assert.Equal(t, []string{"test2"}, config.Data.GetSectionList())
+				assert.Equal(t, []string{"test2"}, config.Data().GetSectionList())
 				assert.Equal(t, "config_test_remote", config.FileGet("test2", "type"))
 				assert.Equal(t, "false", config.FileGet("test2", "bool"))
 				assert.Equal(t, "potato3", obscure.MustReveal(config.FileGet("test2", "pass")))

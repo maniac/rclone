@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"path"
@@ -52,8 +51,8 @@ const (
 	driveTypePersonal           = "personal"
 	driveTypeBusiness           = "business"
 	driveTypeSharepoint         = "documentLibrary"
-	defaultChunkSize            = 10 * fs.MebiByte
-	chunkSizeMultiple           = 320 * fs.KibiByte
+	defaultChunkSize            = 10 * fs.Mebi
+	chunkSizeMultiple           = 320 * fs.Kibi
 
 	regionGlobal = "global"
 	regionUS     = "us"
@@ -99,7 +98,7 @@ func init() {
 		Name:        "onedrive",
 		Description: "Microsoft OneDrive",
 		NewFs:       NewFs,
-		Config: func(ctx context.Context, name string, m configmap.Mapper) {
+		Config: func(ctx context.Context, name string, m configmap.Mapper) error {
 			region, _ := m.Get("region")
 			graphURL := graphAPIEndpoint[region] + "/v1.0"
 			oauthConfig.Endpoint = oauth2.Endpoint{
@@ -109,13 +108,12 @@ func init() {
 			ci := fs.GetConfig(ctx)
 			err := oauthutil.Config(ctx, "onedrive", name, m, oauthConfig, nil)
 			if err != nil {
-				log.Fatalf("Failed to configure token: %v", err)
-				return
+				return errors.Wrap(err, "failed to configure token")
 			}
 
 			// Stop if we are running non-interactive config
 			if ci.AutoConfirm {
-				return
+				return nil
 			}
 
 			type driveResource struct {
@@ -138,7 +136,7 @@ func init() {
 
 			oAuthClient, _, err := oauthutil.NewClient(ctx, name, m, oauthConfig)
 			if err != nil {
-				log.Fatalf("Failed to configure OneDrive: %v", err)
+				return errors.Wrap(err, "failed to configure OneDrive")
 			}
 			srv := rest.NewClient(oAuthClient)
 
@@ -203,18 +201,17 @@ func init() {
 				sites := siteResponse{}
 				_, err := srv.CallJSON(ctx, &opts, nil, &sites)
 				if err != nil {
-					log.Fatalf("Failed to query available sites: %v", err)
+					return errors.Wrap(err, "failed to query available sites")
 				}
 
 				if len(sites.Sites) == 0 {
-					log.Fatalf("Search for '%s' returned no results", searchTerm)
-				} else {
-					fmt.Printf("Found %d sites, please select the one you want to use:\n", len(sites.Sites))
-					for index, site := range sites.Sites {
-						fmt.Printf("%d: %s (%s) id=%s\n", index, site.SiteName, site.SiteURL, site.SiteID)
-					}
-					siteID = sites.Sites[config.ChooseNumber("Chose drive to use:", 0, len(sites.Sites)-1)].SiteID
+					return errors.Errorf("search for %q returned no results", searchTerm)
 				}
+				fmt.Printf("Found %d sites, please select the one you want to use:\n", len(sites.Sites))
+				for index, site := range sites.Sites {
+					fmt.Printf("%d: %s (%s) id=%s\n", index, site.SiteName, site.SiteURL, site.SiteID)
+				}
+				siteID = sites.Sites[config.ChooseNumber("Chose drive to use:", 0, len(sites.Sites)-1)].SiteID
 			}
 
 			// if we use server-relative URL for finding the drive
@@ -227,7 +224,7 @@ func init() {
 				site := siteResource{}
 				_, err := srv.CallJSON(ctx, &opts, nil, &site)
 				if err != nil {
-					log.Fatalf("Failed to query available site by relative path: %v", err)
+					return errors.Wrap(err, "failed to query available site by relative path")
 				}
 				siteID = site.SiteID
 			}
@@ -247,7 +244,7 @@ func init() {
 				drives := drivesResponse{}
 				_, err := srv.CallJSON(ctx, &opts, nil, &drives)
 				if err != nil {
-					log.Fatalf("Failed to query available drives: %v", err)
+					return errors.Wrap(err, "failed to query available drives")
 				}
 
 				// Also call /me/drive as sometimes /me/drives doesn't return it #4068
@@ -256,7 +253,7 @@ func init() {
 					meDrive := driveResource{}
 					_, err := srv.CallJSON(ctx, &opts, nil, &meDrive)
 					if err != nil {
-						log.Fatalf("Failed to query available drives: %v", err)
+						return errors.Wrap(err, "failed to query available drives")
 					}
 					found := false
 					for _, drive := range drives.Drives {
@@ -273,14 +270,13 @@ func init() {
 				}
 
 				if len(drives.Drives) == 0 {
-					log.Fatalf("No drives found")
-				} else {
-					fmt.Printf("Found %d drives, please select the one you want to use:\n", len(drives.Drives))
-					for index, drive := range drives.Drives {
-						fmt.Printf("%d: %s (%s) id=%s\n", index, drive.DriveName, drive.DriveType, drive.DriveID)
-					}
-					finalDriveID = drives.Drives[config.ChooseNumber("Chose drive to use:", 0, len(drives.Drives)-1)].DriveID
+					return errors.New("no drives found")
 				}
+				fmt.Printf("Found %d drives, please select the one you want to use:\n", len(drives.Drives))
+				for index, drive := range drives.Drives {
+					fmt.Printf("%d: %s (%s) id=%s\n", index, drive.DriveName, drive.DriveType, drive.DriveID)
+				}
+				finalDriveID = drives.Drives[config.ChooseNumber("Chose drive to use:", 0, len(drives.Drives)-1)].DriveID
 			}
 
 			// Test the driveID and get drive type
@@ -291,17 +287,18 @@ func init() {
 			var rootItem api.Item
 			_, err = srv.CallJSON(ctx, &opts, nil, &rootItem)
 			if err != nil {
-				log.Fatalf("Failed to query root for drive %s: %v", finalDriveID, err)
+				return errors.Wrapf(err, "failed to query root for drive %s", finalDriveID)
 			}
 
 			fmt.Printf("Found drive '%s' of type '%s', URL: %s\nIs that okay?\n", rootItem.Name, rootItem.ParentReference.DriveType, rootItem.WebURL)
 			// This does not work, YET :)
 			if !config.ConfirmWithConfig(ctx, m, "config_drive_ok", true) {
-				log.Fatalf("Cancelled by user")
+				return errors.New("cancelled by user")
 			}
 
 			m.Set(configDriveID, finalDriveID)
 			m.Set(configDriveType, rootItem.ParentReference.DriveType)
+			return nil
 		},
 		Options: append(oauthutil.SharedOptions, []fs.Option{{
 			Name:    "region",
@@ -696,7 +693,7 @@ func errorHandler(resp *http.Response) error {
 }
 
 func checkUploadChunkSize(cs fs.SizeSuffix) error {
-	const minChunkSize = fs.Byte
+	const minChunkSize = fs.SizeSuffixBase
 	if cs%chunkSizeMultiple != 0 {
 		return errors.Errorf("%s is not a multiple of %s", cs, chunkSizeMultiple)
 	}
@@ -1885,11 +1882,11 @@ func (o *Object) uploadMultipart(ctx context.Context, in io.Reader, size int64, 
 	return info, nil
 }
 
-// Update the content of a remote file within 4MB size in one single request
+// Update the content of a remote file within 4 MiB size in one single request
 // This function will set modtime after uploading, which will create a new version for the remote file
 func (o *Object) uploadSinglepart(ctx context.Context, in io.Reader, size int64, modTime time.Time, options ...fs.OpenOption) (info *api.Item, err error) {
 	if size < 0 || size > int64(fs.SizeSuffix(4*1024*1024)) {
-		return nil, errors.New("size passed into uploadSinglepart must be >= 0 and <= 4MiB")
+		return nil, errors.New("size passed into uploadSinglepart must be >= 0 and <= 4 MiB")
 	}
 
 	fs.Debugf(o, "Starting singlepart upload")

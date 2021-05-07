@@ -200,7 +200,7 @@ func ChooseNumber(what string, min, max int) int {
 
 // ShowRemotes shows an overview of the config file
 func ShowRemotes() {
-	remotes := Data.GetSectionList()
+	remotes := LoadedData().GetSectionList()
 	if len(remotes) == 0 {
 		return
 	}
@@ -214,7 +214,7 @@ func ShowRemotes() {
 
 // ChooseRemote chooses a remote name
 func ChooseRemote() string {
-	remotes := Data.GetSectionList()
+	remotes := LoadedData().GetSectionList()
 	sort.Strings(remotes)
 	return Choose("remote", remotes, nil, false)
 }
@@ -234,7 +234,7 @@ func ShowRemote(name string) {
 	fmt.Printf("--------------------\n")
 	fmt.Printf("[%s]\n", name)
 	fs := mustFindByName(name)
-	for _, key := range Data.GetKeyList(name) {
+	for _, key := range LoadedData().GetKeyList(name) {
 		isPassword := false
 		for _, option := range fs.Options {
 			if option.Name == key && option.IsPassword {
@@ -261,7 +261,7 @@ func OkRemote(name string) bool {
 	case 'e':
 		return false
 	case 'd':
-		Data.DeleteSection(name)
+		LoadedData().DeleteSection(name)
 		return true
 	default:
 		fs.Errorf(nil, "Bad choice %c", i)
@@ -270,13 +270,14 @@ func OkRemote(name string) bool {
 }
 
 // RemoteConfig runs the config helper for the remote if needed
-func RemoteConfig(ctx context.Context, name string) {
+func RemoteConfig(ctx context.Context, name string) error {
 	fmt.Printf("Remote config\n")
 	f := mustFindByName(name)
 	if f.Config != nil {
 		m := fs.ConfigMap(f, name, nil)
-		f.Config(ctx, name, m)
+		return f.Config(ctx, name, m)
 	}
+	return nil
 }
 
 // matchProvider returns true if provider matches the providerConfig string.
@@ -353,7 +354,7 @@ func ChooseOption(o *fs.Option, name string) string {
 	case bool:
 		what = "boolean value (true or false)"
 	case fs.SizeSuffix:
-		what = "size with suffix k,M,G,T"
+		what = "size with suffix K,M,G,T"
 	case fs.Duration:
 		what = "duration s,m,h,d,w,M,y"
 	case int, int8, int16, int32, int64:
@@ -401,7 +402,7 @@ func NewRemoteName() (name string) {
 	for {
 		fmt.Printf("name> ")
 		name = ReadLine()
-		if Data.HasSection(name) {
+		if LoadedData().HasSection(name) {
 			fmt.Printf("Remote %q already exists.\n", name)
 			continue
 		}
@@ -456,7 +457,7 @@ func editOptions(ri *fs.RegInfo, name string, isNew bool) {
 }
 
 // NewRemote make a new remote from its name
-func NewRemote(ctx context.Context, name string) {
+func NewRemote(ctx context.Context, name string) error {
 	var (
 		newType string
 		ri      *fs.RegInfo
@@ -473,19 +474,22 @@ func NewRemote(ctx context.Context, name string) {
 		}
 		break
 	}
-	Data.SetValue(name, "type", newType)
+	LoadedData().SetValue(name, "type", newType)
 
 	editOptions(ri, name, true)
-	RemoteConfig(ctx, name)
+	err = RemoteConfig(ctx, name)
+	if err != nil {
+		return err
+	}
 	if OkRemote(name) {
 		SaveConfig()
-		return
+		return nil
 	}
-	EditRemote(ctx, ri, name)
+	return EditRemote(ctx, ri, name)
 }
 
 // EditRemote gets the user to edit a remote
-func EditRemote(ctx context.Context, ri *fs.RegInfo, name string) {
+func EditRemote(ctx context.Context, ri *fs.RegInfo, name string) error {
 	ShowRemote(name)
 	fmt.Printf("Edit remote\n")
 	for {
@@ -495,12 +499,12 @@ func EditRemote(ctx context.Context, ri *fs.RegInfo, name string) {
 		}
 	}
 	SaveConfig()
-	RemoteConfig(ctx, name)
+	return RemoteConfig(ctx, name)
 }
 
 // DeleteRemote gets the user to delete a remote
 func DeleteRemote(name string) {
-	Data.DeleteSection(name)
+	LoadedData().DeleteSection(name)
 	SaveConfig()
 }
 
@@ -509,9 +513,9 @@ func DeleteRemote(name string) {
 func copyRemote(name string) string {
 	newName := NewRemoteName()
 	// Copy the keys
-	for _, key := range Data.GetKeyList(name) {
+	for _, key := range LoadedData().GetKeyList(name) {
 		value := getWithDefault(name, key, "")
-		Data.SetValue(newName, key, value)
+		LoadedData().SetValue(newName, key, value)
 	}
 	return newName
 }
@@ -521,7 +525,7 @@ func RenameRemote(name string) {
 	fmt.Printf("Enter new name for %q remote.\n", name)
 	newName := copyRemote(name)
 	if name != newName {
-		Data.DeleteSection(name)
+		LoadedData().DeleteSection(name)
 		SaveConfig()
 	}
 }
@@ -549,7 +553,7 @@ func ShowConfigLocation() {
 
 // ShowConfig prints the (unencrypted) config options
 func ShowConfig() {
-	str, err := Data.Serialize()
+	str, err := LoadedData().Serialize()
 	if err != nil {
 		log.Fatalf("Failed to serialize config: %v", err)
 	}
@@ -560,9 +564,9 @@ func ShowConfig() {
 }
 
 // EditConfig edits the config file interactively
-func EditConfig(ctx context.Context) {
+func EditConfig(ctx context.Context) (err error) {
 	for {
-		haveRemotes := len(Data.GetSectionList()) != 0
+		haveRemotes := len(LoadedData().GetSectionList()) != 0
 		what := []string{"eEdit existing remote", "nNew remote", "dDelete remote", "rRename remote", "cCopy remote", "sSet configuration password", "qQuit config"}
 		if haveRemotes {
 			fmt.Printf("Current remotes:\n\n")
@@ -577,9 +581,15 @@ func EditConfig(ctx context.Context) {
 		case 'e':
 			name := ChooseRemote()
 			fs := mustFindByName(name)
-			EditRemote(ctx, fs, name)
+			err = EditRemote(ctx, fs, name)
+			if err != nil {
+				return err
+			}
 		case 'n':
-			NewRemote(ctx, NewRemoteName())
+			err = NewRemote(ctx, NewRemoteName())
+			if err != nil {
+				return err
+			}
 		case 'd':
 			name := ChooseRemote()
 			DeleteRemote(name)
@@ -590,8 +600,7 @@ func EditConfig(ctx context.Context) {
 		case 's':
 			SetPassword()
 		case 'q':
-			return
-
+			return nil
 		}
 	}
 }
