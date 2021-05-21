@@ -88,8 +88,8 @@ type RegInfo struct {
 	// object, then it should return an Fs which which points to
 	// the parent of that object and ErrorIsFile.
 	NewFs func(ctx context.Context, name string, root string, config configmap.Mapper) (Fs, error) `json:"-"`
-	// Function to call to help with config
-	Config func(ctx context.Context, name string, config configmap.Mapper) error `json:"-"`
+	// Function to call to help with config - see docs for ConfigIn for more info
+	Config func(ctx context.Context, name string, m configmap.Mapper, configIn ConfigIn) (*ConfigOut, error) `json:"-"`
 	// Options for the Fs configuration
 	Options Options
 	// The command help, if any
@@ -157,6 +157,17 @@ func (os Options) NonDefault(m configmap.Getter) configmap.Simple {
 	return nonDefault
 }
 
+// HasAdvanced discovers if any options have an Advanced setting
+func (os Options) HasAdvanced() bool {
+	for i := range os {
+		opt := &os[i]
+		if opt.Advanced {
+			return true
+		}
+	}
+	return false
+}
+
 // OptionVisibility controls whether the options are visible in the
 // configurator or the command line.
 type OptionVisibility byte
@@ -184,6 +195,7 @@ type Option struct {
 	IsPassword bool             // set if the option is a password
 	NoPrefix   bool             // set if the option for this should not use the backend prefix
 	Advanced   bool             // set if this is an advanced config option
+	Exclusive  bool             // set if the answer can only be one of the examples
 }
 
 // BaseOption is an alias for Option used internally
@@ -253,6 +265,13 @@ func (o *Option) FlagName(prefix string) string {
 // EnvVarName for the option
 func (o *Option) EnvVarName(prefix string) string {
 	return OptionToEnv(prefix + "-" + o.Name)
+}
+
+// Copy makes a shallow copy of the option
+func (o *Option) Copy() *Option {
+	copy := new(Option)
+	*copy = *o
+	return copy
 }
 
 // OptionExamples is a slice of examples
@@ -1419,7 +1438,7 @@ func NewFs(ctx context.Context, path string) (Fs, error) {
 		extraConfig := overridden.String()
 		//Debugf(nil, "detected overriden config %q", extraConfig)
 		md5sumBinary := md5.Sum([]byte(extraConfig))
-		suffix := base64.RawStdEncoding.EncodeToString(md5sumBinary[:])
+		suffix := base64.RawURLEncoding.EncodeToString(md5sumBinary[:])
 		// 5 characters length is 5*6 = 30 bits of base64
 		const maxLength = 5
 		if len(suffix) > maxLength {
