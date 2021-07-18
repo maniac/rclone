@@ -349,6 +349,7 @@ func (sg *statsGroups) names() []string {
 
 // sum returns aggregate stats that contains summation of all groups.
 func (sg *statsGroups) sum(ctx context.Context) *StatsInfo {
+	startTime := GlobalStats().startTime
 	sg.mu.Lock()
 	defer sg.mu.Unlock()
 
@@ -377,6 +378,7 @@ func (sg *statsGroups) sum(ctx context.Context) *StatsInfo {
 		}
 		stats.mu.RUnlock()
 	}
+	sum.startTime = startTime
 	return sum
 }
 

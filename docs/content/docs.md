@@ -239,6 +239,13 @@ However using the connection string syntax, this does work.
 
     rclone copy "gdrive,shared_with_me:shared-file.txt" gdrive:
 
+Note that the connection string only affects the options of the immediate 
+backend. If for example gdriveCrypt is a crypt based on gdrive, then the 
+following command **will not work** as intended, because 
+`shared_with_me` is ignored by the crypt backend:
+
+    rclone copy "gdriveCrypt,shared_with_me:shared-file.txt" gdriveCrypt:
+
 The connection strings have the following syntax
 
     remote,parameter=value,parameter2=value2:path/to/dir
@@ -2129,6 +2136,8 @@ Or to always use the trash in drive `--drive-use-trash`, set
 The same parser is used for the options and the environment variables
 so they take exactly the same form.
 
+The options set by environment variables can be seen with the `-vv` flag, e.g. `rclone version -vv`.
+
 ### Config file ###
 
 You can set defaults for values in the config file on an individual
@@ -2155,6 +2164,11 @@ mys3:
 Note that if you want to create a remote using environment variables
 you must create the `..._TYPE` variable as above.
 
+Note that you can only set the options of the immediate backend, 
+so RCLONE_CONFIG_MYS3CRYPT_ACCESS_KEY_ID has no effect, if myS3Crypt is 
+a crypt remote based on an S3 remote. However RCLONE_S3_ACCESS_KEY_ID will 
+set the access key of all remotes using S3, including myS3Crypt.
+
 Note also that now rclone has [connection strings](#connection-strings),
 it is probably easier to use those instead which makes the above example
 
@@ -2165,15 +2179,19 @@ it is probably easier to use those instead which makes the above example
 The various different methods of backend configuration are read in
 this order and the first one with a value is used.
 
-- Flag values as supplied on the command line, e.g. `--drive-use-trash`.
-- Remote specific environment vars, e.g. `RCLONE_CONFIG_MYREMOTE_USE_TRASH` (see above).
-- Backend specific environment vars, e.g. `RCLONE_DRIVE_USE_TRASH`.
-- Config file, e.g. `use_trash = false`.
-- Default values, e.g. `true` - these can't be changed.
+- Parameters in connection strings, e.g. `myRemote,skip_links:`
+- Flag values as supplied on the command line, e.g. `--skip-links`
+- Remote specific environment vars, e.g. `RCLONE_CONFIG_MYREMOTE_SKIP_LINKS` (see above).
+- Backend specific environment vars, e.g. `RCLONE_LOCAL_SKIP_LINKS`.
+- Backend generic environment vars, e.g. `RCLONE_SKIP_LINKS`.
+- Config file, e.g. `skip_links = true`.
+- Default values, e.g. `false` - these can't be changed.
 
-So if both `--drive-use-trash` is supplied on the config line and an
-environment variable `RCLONE_DRIVE_USE_TRASH` is set, the command line
+So if both `--skip-links` is supplied on the command line and an
+environment variable `RCLONE_LOCAL_SKIP_LINKS` is set, the command line
 flag will take preference.
+
+The backend configurations set by environment variables can be seen with the `-vv` flag, e.g. `rclone about myRemote: -vv`.
 
 For non backend configuration the order is as follows:
 
@@ -2187,4 +2205,7 @@ For non backend configuration the order is as follows:
 - `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` (or the lowercase versions thereof).
     - `HTTPS_PROXY` takes precedence over `HTTP_PROXY` for https requests.
     - The environment values may be either a complete URL or a "host[:port]" for, in which case the "http" scheme is assumed.
+- `USER` and `LOGNAME` values are used as fallbacks for current username. The primary method for looking up username is OS-specific: Windows API on Windows, real user ID in /etc/passwd on Unix systems. In the documentation the current username is simply referred to as `$USER`.
 - `RCLONE_CONFIG_DIR` - rclone **sets** this variable for use in config files and sub processes to point to the directory holding the config file.
+
+The options set by environment variables can be seen with the `-vv` and `--log-level=DEBUG` flags, e.g. `rclone version -vv`.
