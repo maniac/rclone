@@ -1,6 +1,7 @@
 package mountlib
 
 import (
+	"context"
 	"log"
 	"os"
 	"path/filepath"
@@ -128,6 +129,10 @@ func NewMountCommand(commandName string, hidden bool, mount MountFn) *cobra.Comm
 		Run: func(command *cobra.Command, args []string) {
 			cmd.CheckArgs(2, 2, command, args)
 
+			if fs.GetConfig(context.Background()).UseListR {
+				fs.Logf(nil, "--fast-list does nothing on a mount")
+			}
+
 			if Opt.Daemon {
 				config.PassConfigKeyForDaemonization = true
 			}
@@ -145,8 +150,8 @@ func NewMountCommand(commandName string, hidden bool, mount MountFn) *cobra.Comm
 				VFSOpt:     vfsflags.Opt,
 			}
 
-			err := mnt.Mount()
-			if err == nil {
+			daemonized, err := mnt.Mount()
+			if !daemonized && err == nil {
 				err = mnt.Wait()
 			}
 			if err != nil {
@@ -167,21 +172,21 @@ func NewMountCommand(commandName string, hidden bool, mount MountFn) *cobra.Comm
 }
 
 // Mount the remote at mountpoint
-func (m *MountPoint) Mount() (err error) {
+func (m *MountPoint) Mount() (daemonized bool, err error) {
 	if err = m.CheckOverlap(); err != nil {
-		return err
+		return false, err
 	}
 
 	if err = m.CheckAllowings(); err != nil {
-		return err
+		return false, err
 	}
 	m.SetVolumeName(m.MountOpt.VolumeName)
 
-	// Start background task if --background is specified
+	// Start background task if --daemon is specified
 	if m.MountOpt.Daemon {
-		daemonized := startBackgroundMode()
+		daemonized = startBackgroundMode()
 		if daemonized {
-			return nil
+			return true, nil
 		}
 	}
 
@@ -189,9 +194,9 @@ func (m *MountPoint) Mount() (err error) {
 
 	m.ErrChan, m.UnmountFn, err = m.MountFn(m.VFS, m.MountPoint, &m.MountOpt)
 	if err != nil {
-		return errors.Wrap(err, "failed to mount FUSE fs")
+		return false, errors.Wrap(err, "failed to mount FUSE fs")
 	}
-	return nil
+	return false, nil
 }
 
 // CheckOverlap checks that root doesn't overlap with mountpoint

@@ -47,7 +47,7 @@ When running in background mode the user will have to stop the mount manually:
 
     # Linux
     fusermount -u /path/to/local/mount
-    # OS X
+    # macOS
     umount /path/to/local/mount
 
 The umount operation can fail, for example when the mountpoint is busy.
@@ -238,7 +238,7 @@ Hubic) do not support the concept of empty directories, so empty
 directories will have a tendency to disappear once they fall out of
 the directory cache.
 
-Only supported on Linux, FreeBSD, OS X and Windows at the moment.
+Only supported on Linux, FreeBSD, macOS and Windows at the moment.
 
 ## rclone mount vs rclone sync/copy
 
@@ -602,13 +602,13 @@ rclone mount remote:path /path/to/mountpoint [flags]
       --no-checksum                            Don't compare checksums on up/download.
       --no-modtime                             Don't read/write the modification time (can speed things up).
       --no-seek                                Don't allow seeking in files.
-      --noappledouble                          Ignore Apple Double (._) and .DS_Store files. Supported on OSX only. (default true)
-      --noapplexattr                           Ignore all "com.apple.*" extended attributes. Supported on OSX only.
+      --noappledouble                          Ignore Apple Double (._) and .DS_Store files. Supported on macOS only. (default true)
+      --noapplexattr                           Ignore all "com.apple.*" extended attributes. Supported on macOS only.
   -o, --option stringArray                     Option for libfuse/WinFsp. Repeat if required.
       --poll-interval duration                 Time to wait between polling for changes. Must be smaller than dir-cache-time. Only on supported remotes. Set to 0 to disable. (default 1m0s)
       --read-only                              Mount read-only.
       --uid uint32                             Override the uid field set by the filesystem. Not supported on Windows. (default 1000)
-      --umask int                              Override the permission bits set by the filesystem. Not supported on Windows. (default 18)
+      --umask int                              Override the permission bits set by the filesystem. Not supported on Windows. (default 2)
       --vfs-cache-max-age duration             Max age of objects in the cache. (default 1h0m0s)
       --vfs-cache-max-size SizeSuffix          Max total size of objects in the cache. (default off)
       --vfs-cache-mode CacheMode               Cache mode off|minimal|writes|full (default off)
@@ -621,7 +621,7 @@ rclone mount remote:path /path/to/mountpoint [flags]
       --vfs-used-is-size rclone size           Use the rclone size algorithm for Used size.
       --vfs-write-back duration                Time to writeback files after last use when using cache. (default 5s)
       --vfs-write-wait duration                Time to wait for in-sequence write before giving error. (default 1s)
-      --volname string                         Set the volume name. Supported on Windows and OSX only.
+      --volname string                         Set the volume name. Supported on Windows and macOS only.
       --write-back-cache                       Makes kernel buffer writes before sending them to rclone. Without this, writethrough caching is used. Not supported on Windows.
 ```
 
