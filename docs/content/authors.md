@@ -282,7 +282,7 @@ put them back in again.` >}}
   * Chaitanya Bankanhal <bchaitanya15@gmail.com>
   * Michał Matczuk <michal@scylladb.com>
   * Macavirus <macavirus@zoho.com>
-  * Abhinav Sharma <abhi18av@users.noreply.github.com>
+  * Abhinav Sharma <abhi18av@outlook.com>
   * ginvine <34869051+ginvine@users.noreply.github.com>
   * Patrick Wang <mail6543210@yahoo.com.tw>
   * Cenk Alti <cenkalti@gmail.com>
@@ -520,3 +520,4 @@ put them back in again.` >}}
   * Ken Enrique Morel <ken.morel.santana@gmail.com>
   * Justin Hellings <justin.hellings@gmail.com>
   * Parth Shukla <pparth@pparth.net>
+  * wzl <wangzl31@outlook.com>
