@@ -3,6 +3,8 @@ title: "Authors"
 description: "Rclone Authors and Contributors"
 ---
 
+# Authors and contributors
+
 Authors
 -------
 
@@ -521,3 +523,5 @@ put them back in again.` >}}
   * Justin Hellings <justin.hellings@gmail.com>
   * Parth Shukla <pparth@pparth.net>
   * wzl <wangzl31@outlook.com>
+  * HNGamingUK <connor@earnshawhome.co.uk>
+  * Jonta <359397+Jonta@users.noreply.github.com>
