@@ -1,3 +1,6 @@
+//go:build !race
+// +build !race
+
 package docker_test
 
 import (
@@ -63,11 +66,12 @@ func assertVolumeInfo(t *testing.T, v *docker.VolInfo, name, path string) {
 
 func TestDockerPluginLogic(t *testing.T) {
 	ctx := context.Background()
-	oldCacheDir := config.CacheDir
+	oldCacheDir := config.GetCacheDir()
 	testDir, testFs := initialise(ctx, t)
-	config.CacheDir = testDir
+	err := config.SetCacheDir(testDir)
+	require.NoError(t, err)
 	defer func() {
-		config.CacheDir = oldCacheDir
+		_ = config.SetCacheDir(oldCacheDir)
 		if !t.Failed() {
 			fstest.Purge(testFs)
 			_ = os.RemoveAll(testDir)
@@ -304,11 +308,12 @@ func testMountAPI(t *testing.T, sockAddr string) {
 	}
 
 	ctx := context.Background()
-	oldCacheDir := config.CacheDir
+	oldCacheDir := config.GetCacheDir()
 	testDir, testFs := initialise(ctx, t)
-	config.CacheDir = testDir
+	err := config.SetCacheDir(testDir)
+	require.NoError(t, err)
 	defer func() {
-		config.CacheDir = oldCacheDir
+		_ = config.SetCacheDir(oldCacheDir)
 		if !t.Failed() {
 			fstest.Purge(testFs)
 			_ = os.RemoveAll(testDir)
