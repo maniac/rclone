@@ -2,6 +2,7 @@ package adb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,8 +14,7 @@ import (
 	"github.com/rclone/rclone/fs/config/configmap"
 	"github.com/rclone/rclone/fs/config/configstruct"
 	"github.com/rclone/rclone/fs/hash"
-	"github.com/rclone/rclone/lib/errors"
-
+	
 	adb "github.com/zach-klippenstein/goadb"
 )
 
