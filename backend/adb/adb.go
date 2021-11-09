@@ -171,7 +171,7 @@ func (f *Fs) tryStat(path string) (os.FileMode, int64, time.Time, error) {
 		if strings.Contains(ret, "No such file or directory") {
 			return 0, 0, time.Time{}, err
 		}
-		return 0, 0, time.Time{}, errors.Errorf("stat unknown %d: %s", code, ret)
+		return 0, 0, time.Time{}, fmt.Errorf("stat unknown %d: %s", code, ret)
 	}
 
 	modeStrings := strings.Split(ret, " ")
@@ -319,7 +319,7 @@ func (f *Fs) Mkdir(ctx context.Context, dir string) error {
 
 	if code != 0 {
 		if !strings.Contains(ret, "File exists") {
-			return errors.Errorf("mkdir return %d, %s", code, ret)
+			return fmt.Errorf("mkdir return %d, %s", code, ret)
 		}
 	}
 
@@ -339,7 +339,7 @@ func (f *Fs) Rmdir(ctx context.Context, dir string) error {
 		if strings.Contains(ret, "Directory not empty") {
 			return fs.ErrorDirectoryNotEmpty
 		}
-		return errors.Errorf("rm return %d, %s", code, ret)
+		return fmt.Errorf("rm return %d, %s", code, ret)
 	}
 
 	return nil
@@ -540,7 +540,7 @@ func (f *Fs) Purge(ctx context.Context, dir string) error {
 	}
 
 	if code != 0 {
-		return errors.Errorf("rm return %d, %s", code, ret)
+		return fmt.Errorf("rm return %d, %s", code, ret)
 	}
 
 	return nil
@@ -563,7 +563,7 @@ func (f *Fs) Copy(ctx context.Context, src fs.Object, remote string) (fs.Object,
 	}
 
 	if code != 0 {
-		return nil, errors.Errorf("cp return %d, %s", code, ret)
+		return nil, fmt.Errorf("cp return %d, %s", code, ret)
 	}
 
 	filePos := strings.LastIndex(remote, "/")
@@ -595,7 +595,7 @@ func (f *Fs) Move(ctx context.Context, src fs.Object, remote string) (fs.Object,
 		if strings.Contains(ret, "No such file or directory") {
 			return nil, fs.ErrorObjectNotFound
 		}
-		return nil, errors.Errorf("mv return %d, %s", code, ret)
+		return nil, fmt.Errorf("mv return %d, %s", code, ret)
 	}
 
 	filePos := strings.LastIndex(remote, "/")
