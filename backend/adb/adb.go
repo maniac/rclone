@@ -520,7 +520,7 @@ func (o *Object) Remove(ctx context.Context) error {
 	}
 
 	if code != 0 {
-		return errors.Errorf("rm return %d, %s", code, ret)
+		return fmt.Errorf("rm return %d, %s", code, ret)
 	}
 
 	return nil
