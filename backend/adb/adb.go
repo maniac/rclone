@@ -2,7 +2,6 @@ package adb
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
