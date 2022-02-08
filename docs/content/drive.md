@@ -410,7 +410,7 @@ For shortcuts pointing to files:
 - When downloading the contents of the destination file is downloaded.
 - When updating shortcut file with a non shortcut file, the shortcut is removed then a new file is uploaded in place of the shortcut.
 - When server-side moving (renaming) the shortcut is renamed, not the destination file.
-- When server-side copying the shortcut is copied, not the contents of the shortcut.
+- When server-side copying the shortcut is copied, not the contents of the shortcut. (unless `--drive-copy-shortcut-content` is in use in which case the contents of the shortcut gets copied).
 - When deleting the shortcut is deleted not the linked file.
 - When setting the modification time, the modification time of the linked file will be set.
 
@@ -1339,7 +1339,8 @@ credentials", which opens the wizard), then "Create credentials"
 to the next step; if not, click on "CONFIGURE CONSENT SCREEN" button 
 (near the top right corner of the right panel), then select "External"
 and click on "CREATE"; on the next screen, enter an "Application name"
-("rclone" is OK) then click on "Save" (all other data is optional). 
+("rclone" is OK); enter "User Support Email" (your own email is OK); 
+enter "Developer Contact Email" (your own email is OK); then click on "Save" (all other data is optional). 
 Click again on "Credentials" on the left panel to go back to the 
 "Credentials" screen.
 
