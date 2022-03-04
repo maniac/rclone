@@ -571,3 +571,5 @@ put them back in again.` >}}
   * viveknathani <viveknathani2402@gmail.com>
   * Eng Zer Jun <engzerjun@gmail.com>
   * Abhiraj <abhiraj.official15@gmail.com>
+  * Márton Elek <elek@apache.org> <elek@users.noreply.github.com>
+  * Vincent Murphy <vdm@vdm.ie>

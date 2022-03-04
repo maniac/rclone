@@ -1548,6 +1548,14 @@ See: https://github.com/rclone/rclone/issues/4673, https://github.com/rclone/rcl
 This is usually set to a CloudFront CDN URL as AWS S3 offers
 cheaper egress for data downloaded through the CloudFront network.`,
 			Advanced: true,
+		}, {
+			Name: "use_multipart_etag",
+			Help: `Whether to use ETag in multipart uploads for verification
+
+This should be true, false or left unset to use the default for the provider.
+`,
+			Default:  fs.Tristate{},
+			Advanced: true,
 		},
 		}})
 }
@@ -1612,6 +1620,7 @@ type Options struct {
 	MemoryPoolUseMmap     bool                 `config:"memory_pool_use_mmap"`
 	DisableHTTP2          bool                 `config:"disable_http2"`
 	DownloadURL           string               `config:"download_url"`
+	UseMultipartEtag      fs.Tristate          `config:"use_multipart_etag"`
 }
 
 // Fs represents a remote s3 server
@@ -1915,12 +1924,13 @@ func setQuirks(opt *Options) {
 		listObjectsV2     = true
 		virtualHostStyle  = true
 		urlEncodeListings = true
+		useMultipartEtag  = true
 	)
 	switch opt.Provider {
 	case "AWS":
 		// No quirks
 	case "Alibaba":
-		// No quirks
+		useMultipartEtag = false // Alibaba seems to calculate multipart Etags differently from AWS
 	case "Ceph":
 		listObjectsV2 = false
 		virtualHostStyle = false
@@ -1933,13 +1943,16 @@ func setQuirks(opt *Options) {
 		listObjectsV2 = false // untested
 		virtualHostStyle = false
 		urlEncodeListings = false
+		useMultipartEtag = false // untested
 	case "Minio":
 		virtualHostStyle = false
 	case "Netease":
 		listObjectsV2 = false // untested
 		urlEncodeListings = false
+		useMultipartEtag = false // untested
 	case "RackCorp":
 		// No quirks
+		useMultipartEtag = false // untested
 	case "Scaleway":
 		// Scaleway can only have 1000 parts in an upload
 		if opt.MaxUploadParts > 1000 {
@@ -1950,6 +1963,7 @@ func setQuirks(opt *Options) {
 		listObjectsV2 = false // untested
 		virtualHostStyle = false
 		urlEncodeListings = false
+		useMultipartEtag = false // untested
 	case "StackPath":
 		listObjectsV2 = false // untested
 		virtualHostStyle = false
@@ -1960,18 +1974,21 @@ func setQuirks(opt *Options) {
 			opt.ChunkSize = 64 * fs.Mebi
 		}
 	case "TencentCOS":
-		listObjectsV2 = false // untested
+		listObjectsV2 = false    // untested
+		useMultipartEtag = false // untested
 	case "Wasabi":
 		// No quirks
 	case "Other":
 		listObjectsV2 = false
 		virtualHostStyle = false
 		urlEncodeListings = false
+		useMultipartEtag = false
 	default:
 		fs.Logf("s3", "s3 provider %q not known - please set correctly", opt.Provider)
 		listObjectsV2 = false
 		virtualHostStyle = false
 		urlEncodeListings = false
+		useMultipartEtag = false
 	}
 
 	// Path Style vs Virtual Host style
@@ -1992,6 +2009,12 @@ func setQuirks(opt *Options) {
 		} else {
 			opt.ListVersion = 1
 		}
+	}
+
+	// Set the correct use multipart Etag for error checking if not manually set
+	if !opt.UseMultipartEtag.Valid {
+		opt.UseMultipartEtag.Valid = true
+		opt.UseMultipartEtag.Value = useMultipartEtag
 	}
 }
 
@@ -3244,9 +3267,6 @@ func (o *Object) readMetaData(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
-	if resp.LastModified == nil {
-		fs.Logf(o, "Failed to read last modified from HEAD: %v", err)
-	}
 	o.setMetaData(resp.ETag, resp.ContentLength, resp.LastModified, resp.Metadata, resp.ContentType, resp.StorageClass)
 	return nil
 }
@@ -3276,6 +3296,7 @@ func (o *Object) setMetaData(etag *string, contentLength *int64, lastModified *t
 	o.storageClass = aws.StringValue(storageClass)
 	if lastModified == nil {
 		o.lastModified = time.Now()
+		fs.Logf(o, "Failed to read last modified")
 	} else {
 		o.lastModified = *lastModified
 	}
@@ -3447,9 +3468,7 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (in io.Read
 	if err != nil {
 		return nil, err
 	}
-	if resp.LastModified == nil {
-		fs.Logf(o, "Failed to read last modified: %v", err)
-	}
+
 	// read size from ContentLength or ContentRange
 	size := resp.ContentLength
 	if resp.ContentRange != nil {
@@ -3472,7 +3491,7 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (in io.Read
 
 var warnStreamUpload sync.Once
 
-func (o *Object) uploadMultipart(ctx context.Context, req *s3.PutObjectInput, size int64, in io.Reader) (err error) {
+func (o *Object) uploadMultipart(ctx context.Context, req *s3.PutObjectInput, size int64, in io.Reader) (etag string, err error) {
 	f := o.fs
 
 	// make concurrency machinery
@@ -3519,7 +3538,7 @@ func (o *Object) uploadMultipart(ctx context.Context, req *s3.PutObjectInput, si
 		return f.shouldRetry(ctx, err)
 	})
 	if err != nil {
-		return fmt.Errorf("multipart upload failed to initialise: %w", err)
+		return etag, fmt.Errorf("multipart upload failed to initialise: %w", err)
 	}
 	uid := cout.UploadId
 
@@ -3548,7 +3567,20 @@ func (o *Object) uploadMultipart(ctx context.Context, req *s3.PutObjectInput, si
 		partsMu  sync.Mutex // to protect parts
 		parts    []*s3.CompletedPart
 		off      int64
+		md5sMu   sync.Mutex
+		md5s     []byte
 	)
+
+	addMd5 := func(md5binary *[md5.Size]byte, partNum int64) {
+		md5sMu.Lock()
+		defer md5sMu.Unlock()
+		start := partNum * md5.Size
+		end := start + md5.Size
+		if extend := end - int64(len(md5s)); extend > 0 {
+			md5s = append(md5s, make([]byte, extend)...)
+		}
+		copy(md5s[start:end], (*md5binary)[:])
+	}
 
 	for partNum := int64(1); !finished; partNum++ {
 		// Get a block of memory from the pool and token which limits concurrency.
@@ -3579,7 +3611,7 @@ func (o *Object) uploadMultipart(ctx context.Context, req *s3.PutObjectInput, si
 			finished = true
 		} else if err != nil {
 			free()
-			return fmt.Errorf("multipart upload failed to read source: %w", err)
+			return etag, fmt.Errorf("multipart upload failed to read source: %w", err)
 		}
 		buf = buf[:n]
 
@@ -3592,6 +3624,7 @@ func (o *Object) uploadMultipart(ctx context.Context, req *s3.PutObjectInput, si
 
 			// create checksum of buffer for integrity checking
 			md5sumBinary := md5.Sum(buf)
+			addMd5(&md5sumBinary, partNum-1)
 			md5sum := base64.StdEncoding.EncodeToString(md5sumBinary[:])
 
 			err = f.pacer.Call(func() (bool, error) {
@@ -3633,7 +3666,7 @@ func (o *Object) uploadMultipart(ctx context.Context, req *s3.PutObjectInput, si
 	}
 	err = g.Wait()
 	if err != nil {
-		return err
+		return etag, err
 	}
 
 	// sort the completed parts by part number
@@ -3654,9 +3687,11 @@ func (o *Object) uploadMultipart(ctx context.Context, req *s3.PutObjectInput, si
 		return f.shouldRetry(ctx, err)
 	})
 	if err != nil {
-		return fmt.Errorf("multipart upload failed to finalise: %w", err)
+		return etag, fmt.Errorf("multipart upload failed to finalise: %w", err)
 	}
-	return nil
+	hashOfHashes := md5.Sum(md5s)
+	etag = fmt.Sprintf("%s-%d", hex.EncodeToString(hashOfHashes[:]), len(parts))
+	return etag, nil
 }
 
 // Update the Object from in with modTime and size
@@ -3765,8 +3800,9 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 	}
 
 	var resp *http.Response // response from PUT
+	var wantETag string     // Multipart upload Etag to check
 	if multipart {
-		err = o.uploadMultipart(ctx, &req, size, in)
+		wantETag, err = o.uploadMultipart(ctx, &req, size, in)
 		if err != nil {
 			return err
 		}
@@ -3846,7 +3882,18 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 
 	// Read the metadata from the newly created object
 	o.meta = nil // wipe old metadata
-	err = o.readMetaData(ctx)
+	head, err := o.headObject(ctx)
+	if err != nil {
+		return err
+	}
+	o.setMetaData(head.ETag, head.ContentLength, head.LastModified, head.Metadata, head.ContentType, head.StorageClass)
+	if o.fs.opt.UseMultipartEtag.Value && !o.fs.etagIsNotMD5 && wantETag != "" && head.ETag != nil && *head.ETag != "" {
+		gotETag := strings.Trim(strings.ToLower(*head.ETag), `"`)
+		if wantETag != gotETag {
+			return fmt.Errorf("multipart upload corrupted: Etag differ: expecting %s but got %s", wantETag, gotETag)
+		}
+		fs.Debugf(o, "Multipart upload Etag: %s OK", wantETag)
+	}
 	return err
 }
 
