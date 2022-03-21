@@ -58,7 +58,7 @@ import (
 func init() {
 	fs.Register(&fs.RegInfo{
 		Name:        "s3",
-		Description: "Amazon S3 Compliant Storage Providers including AWS, Alibaba, Ceph, Digital Ocean, Dreamhost, IBM COS, Minio, RackCorp, SeaweedFS, and Tencent COS",
+		Description: "Amazon S3 Compliant Storage Providers including AWS, Alibaba, Ceph, Digital Ocean, Dreamhost, IBM COS, Lyve Cloud, Minio, RackCorp, SeaweedFS, and Tencent COS",
 		NewFs:       NewFs,
 		CommandHelp: commandHelp,
 		Options: []fs.Option{{
@@ -84,6 +84,9 @@ func init() {
 			}, {
 				Value: "IBMCOS",
 				Help:  "IBM COS S3",
+			}, {
+				Value: "LyveCloud",
+				Help:  "Seagate Lyve Cloud",
 			}, {
 				Value: "Minio",
 				Help:  "Minio Object Storage",
@@ -764,6 +767,18 @@ func init() {
 				Value:    "localhost:8333",
 				Help:     "SeaweedFS S3 localhost",
 				Provider: "SeaweedFS",
+			}, {
+				Value:    "s3.us-east-1.lyvecloud.seagate.com",
+				Help:     "Seagate Lyve Cloud US East 1 (Virginia)",
+				Provider: "LyveCloud",
+			}, {
+				Value:    "s3.us-west-1.lyvecloud.seagate.com",
+				Help:     "Seagate Lyve Cloud US West 1 (California)",
+				Provider: "LyveCloud",
+			}, {
+				Value:    "s3.ap-southeast-1.lyvecloud.seagate.com",
+				Help:     "Seagate Lyve Cloud AP Southeast 1 (Singapore)",
+				Provider: "LyveCloud",
 			}, {
 				Value:    "s3.wasabisys.com",
 				Help:     "Wasabi US East endpoint",
@@ -1944,6 +1959,8 @@ func setQuirks(opt *Options) {
 		virtualHostStyle = false
 		urlEncodeListings = false
 		useMultipartEtag = false // untested
+	case "LyveCloud":
+		useMultipartEtag = false // LyveCloud seems to calculate multipart Etags differently from AWS
 	case "Minio":
 		virtualHostStyle = false
 	case "Netease":

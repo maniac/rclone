@@ -573,3 +573,5 @@ put them back in again.` >}}
   * Abhiraj <abhiraj.official15@gmail.com>
   * Márton Elek <elek@apache.org> <elek@users.noreply.github.com>
   * Vincent Murphy <vdm@vdm.ie>
+  * ctrl-q <34975747+ctrl-q@users.noreply.github.com>
+  * Nil Alexandrov <nalexand@akamai.com>
