@@ -37,6 +37,7 @@ See the following for detailed instructions for
   * [Chunker](/chunker/) - transparently splits large files for other remotes
   * [Citrix ShareFile](/sharefile/)
   * [Compress](/compress/)
+  * [Combine](/combine/)
   * [Crypt](/crypt/) - to encrypt other remotes
   * [DigitalOcean Spaces](/s3/#digitalocean-spaces)
   * [Digi Storage](/koofr/#digi-storage)
@@ -50,6 +51,7 @@ See the following for detailed instructions for
   * [HDFS](/hdfs/)
   * [HTTP](/http/)
   * [Hubic](/hubic/)
+  * [Internet Archive](/internetarchive/)
   * [Jottacloud](/jottacloud/)
   * [Koofr](/koofr/)
   * [Mail.ru Cloud](/mailru/)
@@ -637,12 +639,22 @@ objects to transfer is held in memory before the transfers start.
 
 ### --checkers=N ###
 
-The number of checkers to run in parallel.  Checkers do the equality
-checking of files during a sync.  For some storage systems (e.g. S3,
-Swift, Dropbox) this can take a significant amount of time so they are
-run in parallel.
+Originally controlling just the number of file checkers to run in parallel, 
+e.g. by `rclone copy`. Now a fairly universal parallelism control 
+used by `rclone` in several places. 
 
-The default is to run 8 checkers in parallel.
+Note: checkers do the equality checking of files during a sync. 
+For some storage systems (e.g. S3, Swift, Dropbox) this can take 
+a significant amount of time so they are run in parallel.
+
+The default is to run 8 checkers in parallel. However, in case 
+of slow-reacting backends you may need to lower (rather than increase)
+this default by setting `--checkers` to 4 or less threads. This is 
+especially advised if you are experiencing backend server crashes 
+during file checking phase (e.g. on subsequent or top-up backups 
+where little or no file copying is done and checking takes up 
+most of the time). Increase this setting only with utmost care, 
+while monitoring your server health and file checking throughput.
 
 ### -c, --checksum ###
 
@@ -787,7 +799,9 @@ See `--compare-dest` and `--backup-dir`.
 
 ### --dedupe-mode MODE ###
 
-Mode to run dedupe command in.  One of `interactive`, `skip`, `first`, `newest`, `oldest`, `rename`.  The default is `interactive`.  See the dedupe command for more information as to what these options mean.
+Mode to run dedupe command in.  One of `interactive`, `skip`, `first`, 
+`newest`, `oldest`, `rename`.  The default is `interactive`.  
+See the dedupe command for more information as to what these options mean.
 
 ### --disable FEATURE,FEATURE,... ###
 
@@ -939,22 +953,22 @@ unit prefix appended to the value (e.g. `9.762Ki`), while in more textual output
 the full unit is shown (e.g. `9.762 KiB`). For counts the SI standard notation is
 used, e.g. prefix `k` for kilo. Used with file counts, `1k` means 1000 files.
 
-The various [list](commands/rclone_ls/) commands output raw numbers by default.
+The various [list](/commands/rclone_ls/) commands output raw numbers by default.
 Option `--human-readable` will make them output values in human-readable format
 instead (with the short unit prefix).
 
-The [about](commands/rclone_about/) command outputs human-readable by default,
+The [about](/commands/rclone_about/) command outputs human-readable by default,
 with a command-specific option `--full` to output the raw numbers instead.
 
-Command [size](commands/rclone_size/) outputs both human-readable and raw numbers
+Command [size](/commands/rclone_size/) outputs both human-readable and raw numbers
 in the same output.
 
-The [tree](commands/rclone_tree/) command also considers `--human-readable`, but
+The [tree](/commands/rclone_tree/) command also considers `--human-readable`, but
 it will not use the exact same notation as the other commands: It rounds to one
 decimal, and uses single letter suffix, e.g. `K` instead of `Ki`. The reason for
 this is that it relies on an external library.
 
-The interactive command [ncdu](commands/rclone_ncdu/) shows human-readable by
+The interactive command [ncdu](/commands/rclone_ncdu/) shows human-readable by
 default, and responds to key `u` for toggling human-readable format.
 
 ### --ignore-case-sync ###
@@ -1085,7 +1099,12 @@ have a signal to rotate logs.
 
 ### --log-format LIST ###
 
-Comma separated list of log format options. Accepted options are `date`, `time`, `microseconds`, `pid`, `longfile`, `shortfile`, `UTC`. Any other keywords will be silently ignored. `pid` will tag log messages with process identifier which useful with `rclone mount --daemon`. Other accepted options are explained in the [go documentation](https://pkg.go.dev/log#pkg-constants). The default log format is "`date`,`time`".
+Comma separated list of log format options. Accepted options are `date`, 
+`time`, `microseconds`, `pid`, `longfile`, `shortfile`, `UTC`. Any other 
+keywords will be silently ignored. `pid` will tag log messages with process
+identifier which useful with `rclone mount --daemon`. Other accepted
+options are explained in the [go documentation](https://pkg.go.dev/log#pkg-constants).
+The default log format is "`date`,`time`".
 
 ### --log-level LEVEL ###
 
@@ -1793,6 +1812,8 @@ of timeouts or bigger if you have lots of bandwidth and a fast remote.
 
 The default is to run 4 file transfers in parallel.
 
+Look at --multi-thread-streams if you would like to control single file transfers.
+
 ### -u, --update ###
 
 This forces rclone to skip any files which exist on the destination
@@ -1863,6 +1884,9 @@ a small number of significant events.
 With `-vv` rclone will become very verbose telling you about every
 file it considers and transfers.  Please send bug reports with a log
 with this setting.
+
+When setting verbosity as an environment variable, use
+`RCLONE_VERBOSE=1` or `RCLONE_VERBOSE=2` for `-v` and `-vv` respectively.
 
 ### -V, --version ###
 
@@ -2122,6 +2146,7 @@ For the filtering options
   * `--filter-from`
   * `--exclude`
   * `--exclude-from`
+  * `--exclude-if-present`
   * `--include`
   * `--include-from`
   * `--files-from`
@@ -2228,6 +2253,10 @@ override the environment variable setting.
 
 Or to always use the trash in drive `--drive-use-trash`, set
 `RCLONE_DRIVE_USE_TRASH=true`.
+
+Verbosity is slightly different, the environment variable 
+equivalent of `--verbose` or `-v` is `RCLONE_VERBOSE=1`, 
+or for `-vv`, `RCLONE_VERBOSE=2`.
 
 The same parser is used for the options and the environment variables
 so they take exactly the same form.

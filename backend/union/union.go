@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rclone/rclone/backend/union/common"
 	"github.com/rclone/rclone/backend/union/policy"
 	"github.com/rclone/rclone/backend/union/upstream"
 	"github.com/rclone/rclone/fs"
@@ -49,26 +50,24 @@ func init() {
 			Name:    "cache_time",
 			Help:    "Cache time of usage and free space (in seconds).\n\nThis option is only useful when a path preserving policy is used.",
 			Default: 120,
+		}, {
+			Name: "min_free_space",
+			Help: `Minimum viable free space for lfs/eplfs policies.
+
+If a remote has less than this much free space then it won't be
+considered for use in lfs or eplfs policies.`,
+			Advanced: true,
+			Default:  fs.Gibi,
 		}},
 	}
 	fs.Register(fsi)
-}
-
-// Options defines the configuration for this backend
-type Options struct {
-	Upstreams    fs.SpaceSepList `config:"upstreams"`
-	Remotes      fs.SpaceSepList `config:"remotes"` // Deprecated
-	ActionPolicy string          `config:"action_policy"`
-	CreatePolicy string          `config:"create_policy"`
-	SearchPolicy string          `config:"search_policy"`
-	CacheTime    int             `config:"cache_time"`
 }
 
 // Fs represents a union of upstreams
 type Fs struct {
 	name         string         // name of this remote
 	features     *fs.Features   // optional features
-	opt          Options        // options for this Fs
+	opt          common.Options // options for this Fs
 	root         string         // the path we are working on
 	upstreams    []*upstream.Fs // slice of upstreams
 	hashSet      hash.Set       // intersection of hash types
@@ -141,22 +140,20 @@ func (f *Fs) Hashes() hash.Set {
 	return f.hashSet
 }
 
-// Mkdir makes the root directory of the Fs object
-func (f *Fs) Mkdir(ctx context.Context, dir string) error {
+// mkdir makes the directory passed in and returns the upstreams used
+func (f *Fs) mkdir(ctx context.Context, dir string) ([]*upstream.Fs, error) {
 	upstreams, err := f.create(ctx, dir)
 	if err == fs.ErrorObjectNotFound {
-		if dir != parentDir(dir) {
-			if err := f.Mkdir(ctx, parentDir(dir)); err != nil {
-				return err
-			}
-			upstreams, err = f.create(ctx, dir)
+		parent := parentDir(dir)
+		if dir != parent {
+			upstreams, err = f.mkdir(ctx, parent)
 		} else if dir == "" {
 			// If root dirs not created then create them
 			upstreams, err = f.upstreams, nil
 		}
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	errs := Errors(make([]error, len(upstreams)))
 	multithread(len(upstreams), func(i int) {
@@ -165,7 +162,17 @@ func (f *Fs) Mkdir(ctx context.Context, dir string) error {
 			errs[i] = fmt.Errorf("%s: %w", upstreams[i].Name(), err)
 		}
 	})
-	return errs.Err()
+	err = errs.Err()
+	if err != nil {
+		return nil, err
+	}
+	return upstreams, nil
+}
+
+// Mkdir makes the root directory of the Fs object
+func (f *Fs) Mkdir(ctx context.Context, dir string) error {
+	_, err := f.mkdir(ctx, dir)
+	return err
 }
 
 // Purge all files in the directory
@@ -449,10 +456,7 @@ func (f *Fs) put(ctx context.Context, in io.Reader, src fs.ObjectInfo, stream bo
 	srcPath := src.Remote()
 	upstreams, err := f.create(ctx, srcPath)
 	if err == fs.ErrorObjectNotFound {
-		if err := f.Mkdir(ctx, parentDir(srcPath)); err != nil {
-			return nil, err
-		}
-		upstreams, err = f.create(ctx, srcPath)
+		upstreams, err = f.mkdir(ctx, parentDir(srcPath))
 	}
 	if err != nil {
 		return nil, err
@@ -803,7 +807,7 @@ func (f *Fs) Shutdown(ctx context.Context) error {
 // The returned Fs is the actual Fs, referenced by remote in the config
 func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, error) {
 	// Parse config into Options struct
-	opt := new(Options)
+	opt := new(common.Options)
 	err := configstruct.Set(m, opt)
 	if err != nil {
 		return nil, err
@@ -831,7 +835,7 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 	errs := Errors(make([]error, len(opt.Upstreams)))
 	multithread(len(opt.Upstreams), func(i int) {
 		u := opt.Upstreams[i]
-		upstreams[i], errs[i] = upstream.New(ctx, u, root, time.Duration(opt.CacheTime)*time.Second)
+		upstreams[i], errs[i] = upstream.New(ctx, u, root, opt)
 	})
 	var usedUpstreams []*upstream.Fs
 	var fserr error

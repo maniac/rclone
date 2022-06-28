@@ -387,8 +387,7 @@ func Run(t *testing.T, opt *Opt) {
 	// Skip if remote is not SetTier and GetTier capable
 	skipIfNotSetTier := func(t *testing.T) {
 		skipIfNotOk(t)
-		if f.Features().SetTier == false ||
-			f.Features().GetTier == false {
+		if !f.Features().SetTier || !f.Features().GetTier {
 			t.Skip("FS has no SetTier & GetTier interfaces")
 		}
 	}
@@ -735,7 +734,7 @@ func Run(t *testing.T, opt *Opt) {
 
 			TestPutLarge(ctx, t, f, &fstest.Item{
 				ModTime: fstest.Time("2001-02-03T04:05:06.499999999Z"),
-				Path:    fmt.Sprintf("zero-length-file"),
+				Path:    "zero-length-file",
 				Size:    int64(0),
 			})
 		})
@@ -1558,12 +1557,12 @@ func Run(t *testing.T, opt *Opt) {
 						}
 						return nil
 					})
-					if err != errFound && err != errTooMany {
+					if !errors.Is(err, errFound) && !errors.Is(err, errTooMany) {
 						assert.NoError(t, err)
 					}
-					if err != errTooMany {
-						assert.True(t, file1Found, "file1Root not found")
-						assert.True(t, file2Found, "file2Root not found")
+					if !errors.Is(err, errTooMany) {
+						assert.True(t, file1Found, "file1Root %q not found", file1Root.Path)
+						assert.True(t, file2Found, "file2Root %q not found", file2Root.Path)
 					} else {
 						t.Logf("Too many files to list - giving up")
 					}

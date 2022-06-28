@@ -41,7 +41,7 @@ Returns:
 - list
     - This is an array of objects as described in the lsjson command
 
-See the [lsjson command](/commands/rclone_lsjson/) for more information on the above and examples.
+See the [lsjson](/commands/rclone_lsjson/) command for more information on the above and examples.
 `,
 	})
 }
@@ -90,7 +90,7 @@ The result is
 Note that if you are only interested in files then it is much more
 efficient to set the filesOnly flag in the options.
 
-See the [lsjson command](/commands/rclone_lsjson/) for more information on the above and examples.
+See the [lsjson](/commands/rclone_lsjson/) command for more information on the above and examples.
 `,
 	})
 }
@@ -127,7 +127,7 @@ func init() {
 
 The result is as returned from rclone about --json
 
-See the [about command](/commands/rclone_size/) command for more information on the above.
+See the [about](/commands/rclone_about/) command for more information on the above.
 `,
 	})
 }
@@ -202,11 +202,11 @@ func init() {
 		{name: "mkdir", title: "Make a destination directory or container"},
 		{name: "rmdir", title: "Remove an empty directory or container"},
 		{name: "purge", title: "Remove a directory or container and all of its contents"},
-		{name: "rmdirs", title: "Remove all the empty directories in the path", help: "- leaveRoot - boolean, set to true not to delete the root"},
+		{name: "rmdirs", title: "Remove all the empty directories in the path", help: "- leaveRoot - boolean, set to true not to delete the root\n"},
 		{name: "delete", title: "Remove files in the path", noRemote: true},
 		{name: "deletefile", title: "Remove the single file pointed to"},
-		{name: "copyurl", title: "Copy the URL to the object", help: "- url - string, URL to read from\n - autoFilename - boolean, set to true to retrieve destination file name from url"},
-		{name: "uploadfile", title: "Upload file using multiform/form-data", help: "- each part in body represents a file to be uploaded", needsRequest: true},
+		{name: "copyurl", title: "Copy the URL to the object", help: "- url - string, URL to read from\n - autoFilename - boolean, set to true to retrieve destination file name from url\n"},
+		{name: "uploadfile", title: "Upload file using multiform/form-data", help: "- each part in body represents a file to be uploaded\n", needsRequest: true},
 		{name: "cleanup", title: "Remove trashed files in the remote or path", noRemote: true},
 	} {
 		op := op
@@ -226,7 +226,7 @@ func init() {
 
 - fs - a remote name string e.g. "drive:"
 ` + remote + op.help + `
-See the [` + op.name + ` command](/commands/rclone_` + op.name + `/) command for more information on the above.
+See the [` + op.name + `](/commands/rclone_` + op.name + `/) command for more information on the above.
 `,
 		})
 	}
@@ -274,8 +274,9 @@ func rcSingleCommand(ctx context.Context, in rc.Params, name string, noRemote bo
 		}
 		autoFilename, _ := in.GetBool("autoFilename")
 		noClobber, _ := in.GetBool("noClobber")
+		headerFilename, _ := in.GetBool("headerFilename")
 
-		_, err = CopyURL(ctx, f, remote, url, autoFilename, noClobber)
+		_, err = CopyURL(ctx, f, remote, url, autoFilename, headerFilename, noClobber)
 		return nil, err
 	case "uploadfile":
 
@@ -333,7 +334,7 @@ Returns:
 - count - number of files
 - bytes - number of bytes in those files
 
-See the [size command](/commands/rclone_size/) command for more information on the above.
+See the [size](/commands/rclone_size/) command for more information on the above.
 `,
 	})
 }
@@ -344,13 +345,14 @@ func rcSize(ctx context.Context, in rc.Params) (out rc.Params, err error) {
 	if err != nil {
 		return nil, err
 	}
-	count, bytes, err := Count(ctx, f)
+	count, bytes, sizeless, err := Count(ctx, f)
 	if err != nil {
 		return nil, err
 	}
 	out = make(rc.Params)
 	out["count"] = count
 	out["bytes"] = bytes
+	out["sizeless"] = sizeless
 	return out, nil
 }
 
@@ -371,7 +373,7 @@ Returns:
 
 - url - URL of the resource
 
-See the [link command](/commands/rclone_link/) command for more information on the above.
+See the [link](/commands/rclone_link/) command for more information on the above.
 `,
 	})
 }

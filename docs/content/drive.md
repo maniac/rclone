@@ -58,8 +58,6 @@ Choose a number from below, or type in your own value
  5 | does not allow any access to read or download file content.
    \ "drive.metadata.readonly"
 scope> 1
-ID of the root folder - leave blank normally.  Fill in to access "Computers" folders. (see docs).
-root_folder_id> 
 Service Account Credentials JSON file path - needed only if you want use SA instead of interactive login.
 service_account_file>
 Remote config
@@ -161,7 +159,7 @@ directories.
 
 ### Root folder ID
 
-You can set the `root_folder_id` for rclone.  This is the directory
+This option has been moved to the advanced section. You can set the `root_folder_id` for rclone.  This is the directory
 (identified by its `Folder ID`) that rclone considers to be the root
 of your drive.
 
@@ -509,23 +507,28 @@ represent the currently available conversions.
 
 | Extension | Mime Type | Description |
 | --------- |-----------| ------------|
+| bmp  | image/bmp | Windows Bitmap format |
 | csv  | text/csv | Standard CSV format for Spreadsheets |
+| doc  | application/msword | Classic Word file |
 | docx | application/vnd.openxmlformats-officedocument.wordprocessingml.document | Microsoft Office Document |
 | epub | application/epub+zip | E-book format |
 | html | text/html | An HTML Document |
 | jpg  | image/jpeg | A JPEG Image File |
-| json | application/vnd.google-apps.script+json | JSON Text Format |
+| json | application/vnd.google-apps.script+json | JSON Text Format for Google Apps scripts |
 | odp  | application/vnd.oasis.opendocument.presentation | Openoffice Presentation |
 | ods  | application/vnd.oasis.opendocument.spreadsheet | Openoffice Spreadsheet |
 | ods  | application/x-vnd.oasis.opendocument.spreadsheet | Openoffice Spreadsheet |
 | odt  | application/vnd.oasis.opendocument.text | Openoffice Document |
 | pdf  | application/pdf | Adobe PDF Format |
+| pjpeg | image/pjpeg | Progressive JPEG Image |
 | png  | image/png | PNG Image Format|
 | pptx | application/vnd.openxmlformats-officedocument.presentationml.presentation | Microsoft Office Powerpoint |
 | rtf  | application/rtf | Rich Text Format |
 | svg  | image/svg+xml | Scalable Vector Graphics Format |
 | tsv  | text/tab-separated-values | Standard TSV format for spreadsheets |
 | txt  | text/plain | Plain Text |
+| wmf  | application/x-msmetafile | Windows Meta File |
+| xls  | application/vnd.ms-excel | Classic Excel file |
 | xlsx | application/vnd.openxmlformats-officedocument.spreadsheetml.sheet | Microsoft Office Spreadsheet |
 | zip  | application/zip | A ZIP file of HTML, Images CSS |
 
@@ -1375,8 +1378,11 @@ and upload the files if you prefer.
 
 ### Limitations of Google Docs
 
-Google docs will appear as size -1 in `rclone ls` and as size 0 in
-anything which uses the VFS layer, e.g. `rclone mount`, `rclone serve`.
+Google docs will appear as size -1 in `rclone ls`, `rclone ncdu` etc,
+and as size 0 in anything which uses the VFS layer, e.g. `rclone mount`
+and `rclone serve`. When calculating directory totals, e.g. in
+`rclone size` and `rclone ncdu`, they will be counted in as empty
+files.
 
 This is because rclone can't find out the size of the Google docs
 without downloading them.
@@ -1455,8 +1461,9 @@ enter "Developer Contact Email" (your own email is OK); then click on "Save" (al
 Click again on "Credentials" on the left panel to go back to the 
 "Credentials" screen.
 
-(PS: if you are a GSuite user, you could also select "Internal" instead
-of "External" above, but this has not been tested/documented so far). 
+   (PS: if you are a GSuite user, you could also select "Internal" instead
+of "External" above, but this will restrict API use to Google Workspace 
+users in your organisation). 
 
 6.  Click on the "+ CREATE CREDENTIALS" button at the top of the screen,
 then select "OAuth client ID".
@@ -1464,13 +1471,17 @@ then select "OAuth client ID".
 7. Choose an application type of "Desktop app" and click "Create". (the default name is fine)
 
 8. It will show you a client ID and client secret. Make a note of these.
+   
+   (If you selected "External" at Step 5 continue to "Publish App" in the Steps 9 and 10. 
+   If you chose "Internal" you don't need to publish and can skip straight to
+   Step 11.)
 
 9. Go to "Oauth consent screen" and press "Publish App"
 
-10. Provide the noted client ID and client secret to rclone.
-
-11. Click "OAuth consent screen", then click "PUBLISH APP" button and 
+10. Click "OAuth consent screen", then click "PUBLISH APP" button and 
 confirm, or add your account under "Test users".
+
+11. Provide the noted client ID and client secret to rclone.
 
 Be aware that, due to the "enhanced security" recently introduced by
 Google, you are theoretically expected to "submit your app for verification"

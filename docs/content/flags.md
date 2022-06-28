@@ -47,7 +47,7 @@ These flags are available for every command.
       --error-on-no-transfer                 Sets exit code 9 if no files are transferred, useful in scripts
       --exclude stringArray                  Exclude files matching pattern
       --exclude-from stringArray             Read exclude patterns from file (use - to read from stdin)
-      --exclude-if-present string            Exclude directories if filename is present
+      --exclude-if-present stringArray       Exclude directories if filename is present
       --expect-continue-timeout duration     Timeout when using expect / 100-continue in HTTP (default 1s)
       --fast-list                            Use recursive list if available; uses more memory but fewer transactions
       --files-from stringArray               Read list of source-file names from file (use - to read from stdin)
@@ -337,6 +337,7 @@ and may be set in the config file.
       --ftp-concurrency int                          Maximum number of FTP simultaneous connections, 0 for unlimited
       --ftp-disable-epsv                             Disable using EPSV even if server advertises support
       --ftp-disable-mlsd                             Disable using MLSD even if server advertises support
+      --ftp-disable-utf8                             Disable using UTF-8 even if server advertises support
       --ftp-disable-tls13                            Disable TLS 1.3 (workaround for FTP servers with buggy TLS)
       --ftp-encoding MultiEncoder                    The encoding for the backend (default Slash,Del,Ctl,RightSpace,Dot)
       --ftp-explicit-tls                             Use Explicit FTPS (FTP over TLS)
