@@ -85,16 +85,16 @@ func (f *Fs) wrapEntries(entries ...upstream.Entry) (entry, error) {
 	if err != nil {
 		return nil, err
 	}
-	switch e.(type) {
+	switch e := e.(type) {
 	case *upstream.Object:
 		return &Object{
-			Object: e.(*upstream.Object),
+			Object: e,
 			fs:     f,
 			co:     entries,
 		}, nil
 	case *upstream.Directory:
 		return &Directory{
-			Directory: e.(*upstream.Directory),
+			Directory: e,
 			cd:        entries,
 		}, nil
 	default:
@@ -169,7 +169,11 @@ func (f *Fs) mkdir(ctx context.Context, dir string) ([]*upstream.Fs, error) {
 	if err != nil {
 		return nil, err
 	}
-	return upstreams, nil
+	// If created roots then choose one
+	if dir == "" {
+		upstreams, err = f.create(ctx, dir)
+	}
+	return upstreams, err
 }
 
 // Mkdir makes the root directory of the Fs object
@@ -834,6 +838,7 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 		}
 	}
 
+	root = strings.Trim(root, "/")
 	upstreams := make([]*upstream.Fs, len(opt.Upstreams))
 	errs := Errors(make([]error, len(opt.Upstreams)))
 	multithread(len(opt.Upstreams), func(i int) {

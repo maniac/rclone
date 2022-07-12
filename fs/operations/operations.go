@@ -89,7 +89,7 @@ func checkHashes(ctx context.Context, src fs.ObjectInfo, dst fs.Object, ht hash.
 			return dstErr
 		}
 		if dstHash == "" {
-			fs.Debugf(src, "Dst hash empty - aborting Src hash check")
+			fs.Debugf(dst, "Dst hash empty - aborting Src hash check")
 			return errNoHash
 		}
 		return nil
@@ -100,11 +100,11 @@ func checkHashes(ctx context.Context, src fs.ObjectInfo, dst fs.Object, ht hash.
 	}
 	if srcErr != nil {
 		err = fs.CountError(srcErr)
-		fs.Errorf(dst, "Failed to calculate src hash: %v", err)
+		fs.Errorf(src, "Failed to calculate src hash: %v", err)
 	}
 	if dstErr != nil {
 		err = fs.CountError(dstErr)
-		fs.Errorf(src, "Failed to calculate dst hash: %v", err)
+		fs.Errorf(dst, "Failed to calculate dst hash: %v", err)
 	}
 	if err != nil {
 		return false, ht, srcHash, dstHash, err
@@ -424,7 +424,7 @@ func Copy(ctx context.Context, f fs.Fs, dst fs.Object, remote string, src fs.Obj
 				return nil, accounting.ErrorMaxTransferLimitReachedGraceful
 			}
 		}
-		if doCopy := f.Features().Copy; doCopy != nil && (SameConfig(src.Fs(), f) || (SameRemoteType(src.Fs(), f) && f.Features().ServerSideAcrossConfigs)) {
+		if doCopy := f.Features().Copy; doCopy != nil && (SameConfig(src.Fs(), f) || (SameRemoteType(src.Fs(), f) && (f.Features().ServerSideAcrossConfigs || ci.ServerSideAcrossConfigs))) {
 			in := tr.Account(ctx, nil) // account the transfer
 			in.ServerSideCopyStart()
 			newDst, err = doCopy(ctx, src, remote)
@@ -604,6 +604,7 @@ func SameObject(src, dst fs.Object) bool {
 // It returns the destination object if possible.  Note that this may
 // be nil.
 func Move(ctx context.Context, fdst fs.Fs, dst fs.Object, remote string, src fs.Object) (newDst fs.Object, err error) {
+	ci := fs.GetConfig(ctx)
 	tr := accounting.Stats(ctx).NewCheckingTransfer(src)
 	defer func() {
 		if err == nil {
@@ -618,7 +619,7 @@ func Move(ctx context.Context, fdst fs.Fs, dst fs.Object, remote string, src fs.
 		return newDst, nil
 	}
 	// See if we have Move available
-	if doMove := fdst.Features().Move; doMove != nil && (SameConfig(src.Fs(), fdst) || (SameRemoteType(src.Fs(), fdst) && fdst.Features().ServerSideAcrossConfigs)) {
+	if doMove := fdst.Features().Move; doMove != nil && (SameConfig(src.Fs(), fdst) || (SameRemoteType(src.Fs(), fdst) && (fdst.Features().ServerSideAcrossConfigs || ci.ServerSideAcrossConfigs))) {
 		// Delete destination if it exists and is not the same file as src (could be same file while seemingly different if the remote is case insensitive)
 		if dst != nil && !SameObject(src, dst) {
 			err = DeleteFile(ctx, dst)
@@ -1391,11 +1392,14 @@ func Rcat(ctx context.Context, fdst fs.Fs, dstFileName string, in io.ReadCloser,
 
 	compare := func(dst fs.Object) error {
 		var sums map[hash.Type]string
+		opt := defaultEqualOpt(ctx)
 		if hasher != nil {
+			// force --checksum on if we have hashes
+			opt.checkSum = true
 			sums = hasher.Sums()
 		}
 		src := object.NewStaticObjectInfo(dstFileName, modTime, int64(readCounter.BytesRead()), false, sums, fdst)
-		if !Equal(ctx, src, dst) {
+		if !equal(ctx, src, dst, opt) {
 			err = fmt.Errorf("corrupted on transfer")
 			err = fs.CountError(err)
 			fs.Errorf(dst, "%v", err)
