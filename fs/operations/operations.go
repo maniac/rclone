@@ -44,7 +44,7 @@ import (
 // CheckHashes checks the two files to see if they have common
 // known hash types and compares them
 //
-// Returns
+// Returns.
 //
 // equal - which is equality of the hashes
 //
@@ -911,7 +911,7 @@ var SyncPrintf = func(format string, a ...interface{}) {
 
 // Synchronized fmt.Fprintf
 //
-// Ignores errors from Fprintf
+// Ignores errors from Fprintf.
 //
 // Updated to print to terminal if no writer is defined
 // This special behavior is used to allow easier replacement of the print to terminal code by progress
@@ -981,7 +981,7 @@ func CountStringField(count int64, humanReadable bool, rawWidth int) string {
 
 // List the Fs to the supplied writer
 //
-// Shows size and path - obeys includes and excludes
+// Shows size and path - obeys includes and excludes.
 //
 // Lists in parallel which may get them out of order
 func List(ctx context.Context, f fs.Fs, w io.Writer) error {
@@ -993,7 +993,7 @@ func List(ctx context.Context, f fs.Fs, w io.Writer) error {
 
 // ListLong lists the Fs to the supplied writer
 //
-// Shows size, mod time and path - obeys includes and excludes
+// Shows size, mod time and path - obeys includes and excludes.
 //
 // Lists in parallel which may get them out of order
 func ListLong(ctx context.Context, f fs.Fs, w io.Writer) error {
@@ -1952,11 +1952,17 @@ func moveOrCopyFile(ctx context.Context, fdst fs.Fs, fsrc fs.Fs, dstFileName str
 			return err
 		}
 	}
-	NoNeedTransfer, err := CompareOrCopyDest(ctx, fdst, dstObj, srcObj, copyDestDir, backupDir)
-	if err != nil {
-		return err
+	needTransfer := NeedTransfer(ctx, dstObj, srcObj)
+	if needTransfer {
+		NoNeedTransfer, err := CompareOrCopyDest(ctx, fdst, dstObj, srcObj, copyDestDir, backupDir)
+		if err != nil {
+			return err
+		}
+		if NoNeedTransfer {
+			needTransfer = false
+		}
 	}
-	if !NoNeedTransfer && NeedTransfer(ctx, dstObj, srcObj) {
+	if needTransfer {
 		// If destination already exists, then we must move it into --backup-dir if required
 		if dstObj != nil && backupDir != nil {
 			err = MoveBackupDir(ctx, backupDir, dstObj)
