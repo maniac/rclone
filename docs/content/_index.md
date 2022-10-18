@@ -115,7 +115,6 @@ WebDAV or S3, that work out of the box.)
 {{< provider name="China Mobile Ecloud Elastic Object Storage (EOS)" home="https://ecloud.10086.cn/home/product-introduction/eos/" config="/s3/#china-mobile-ecloud-eos" >}}
 {{< provider name="Arvan Cloud Object Storage (AOS)" home="https://www.arvancloud.com/en/products/cloud-storage" config="/s3/#arvan-cloud-object-storage-aos" >}}
 {{< provider name="Citrix ShareFile" home="http://sharefile.com/" config="/sharefile/" >}}
-{{< provider name="C14" home="https://www.online.net/en/storage/c14-cold-storage" config="/s3/#scaleway" >}}
 {{< provider name="Cloudflare R2" home="https://blog.cloudflare.com/r2-open-beta/" config="/s3/#cloudflare-r2" >}}
 {{< provider name="DigitalOcean Spaces" home="https://www.digitalocean.com/products/object-storage/" config="/s3/#digitalocean-spaces" >}}
 {{< provider name="Digi Storage" home="https://storage.rcs-rds.ro/" config="/koofr/#digi-storage" >}}
@@ -130,7 +129,6 @@ WebDAV or S3, that work out of the box.)
 {{< provider name="Hetzner Storage Box" home="https://www.hetzner.com/storage/storage-box" config="/sftp/#hetzner-storage-box" >}}
 {{< provider name="HiDrive" home="https://www.strato.de/cloud-speicher/" config="/hidrive/" >}}
 {{< provider name="HTTP" home="https://en.wikipedia.org/wiki/Hypertext_Transfer_Protocol" config="/http/" >}}
-{{< provider name="Hubic" home="https://hubic.com/" config="/hubic/" >}}
 {{< provider name="Internet Archive" home="https://archive.org/" config="/internetarchive/" >}}
 {{< provider name="Jottacloud" home="https://www.jottacloud.com/en/" config="/jottacloud/" >}}
 {{< provider name="IBM COS S3" home="http://www.ibm.com/cloud/object-storage" config="/s3/#ibm-cos-s3" >}}
@@ -154,6 +152,7 @@ WebDAV or S3, that work out of the box.)
 {{< provider name="premiumize.me" home="https://premiumize.me/" config="/premiumizeme/" >}}
 {{< provider name="put.io" home="https://put.io/" config="/putio/" >}}
 {{< provider name="QingStor" home="https://www.qingcloud.com/products/storage" config="/qingstor/" >}}
+{{< provider name="Qiniu Cloud Object Storage (Kodo)" home="https://www.qiniu.com/en/products/kodo" config="/s3/#qiniu" >}}
 {{< provider name="Rackspace Cloud Files" home="https://www.rackspace.com/cloud/files" config="/swift/" >}}
 {{< provider name="rsync.net" home="https://rsync.net/products/rclone.html" config="/sftp/#rsync-net" >}}
 {{< provider name="Scaleway" home="https://www.scaleway.com/object-storage/" config="/s3/#scaleway" >}}

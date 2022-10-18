@@ -641,3 +641,9 @@ put them back in again.` >}}
   * Dmitry Deniskin <110819396+ddeniskin@users.noreply.github.com>
   * Alexander Knorr <106825+opexxx@users.noreply.github.com>
   * Richard Bateman <richard@batemansr.us>
+  * Dimitri Papadopoulos Orfanos <3234522+DimitriPapadopoulos@users.noreply.github.com>
+  * Lorenzo Milesi <lorenzo.milesi@yetopen.com>
+  * Isaac Aymerich <isaac.aymerich@gmail.com>
+  * YanceyChiew <35898533+YanceyChiew@users.noreply.github.com>
+  * Manoj Ghosh <msays2000@gmail.com>
+  * Bachue Zhou <bachue.shu@gmail.com>
