@@ -16,7 +16,7 @@ versionIntroduced: "v1.58"
 - For successive sync runs, leave off the `--resync` flag.
 - Consider using a [filters file](#filtering) for excluding
   unnecessary files and directories from the sync.
-- Consider setting up the [--check-access](#check-access-option) feature
+- Consider setting up the [--check-access](#check-access) feature
   for safety.
 - On Linux, consider setting up a [crontab entry](#cron). bisync can
   safely run in concurrent cron jobs thanks to lock files it maintains.
@@ -164,14 +164,27 @@ deleting **everything** in the other path.
 Access check files are an additional safety measure against data loss.
 bisync will ensure it can find matching `RCLONE_TEST` files in the same places
 in the Path1 and Path2 filesystems.
+`RCLONE_TEST` files are not generated automatically.
+For `--check-access`to succeed, you must first either:
+**A)** Place one or more `RCLONE_TEST` files in the Path1 or Path2 filesystem
+and then do either a run without `--check-access` or a [--resync](#resync) to
+set matching files on both filesystems, or
+**B)** Set `--check-filename` to a filename already in use in various locations
+throughout your sync'd fileset.
 Time stamps and file contents are not important, just the names and locations.
-Place one or more `RCLONE_TEST` files in the Path1 or Path2 filesystem and
-then do either a run without `--check-access` or a `--resync` to set
-matching files on both filesystems.
 If you have symbolic links in your sync tree it is recommended to place
 `RCLONE_TEST` files in the linked-to directory tree to protect against
 bisync assuming a bunch of deleted files if the linked-to tree should not be
-accessible. Also see the `--check-filename` flag.
+accessible.
+See also the [--check-filename](--check-filename) flag.
+
+#### --check-filename
+
+Name of the file(s) used in access health validation.
+The default `--check-filename` is `RCLONE_TEST`.
+One or more files having this filename must exist, synchronized between your
+source and destination filesets, in order for `--check-access` to succeed.
+See [--check-access](#check-access) for additional details.
 
 #### --max-delete
 
