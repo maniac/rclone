@@ -168,9 +168,18 @@ OneDrive allows modification times to be set on objects accurate to 1
 second.  These will be used to detect whether objects need syncing or
 not.
 
-OneDrive personal supports SHA1 type hashes. OneDrive for business and
-Sharepoint Server support
+OneDrive Personal, OneDrive for Business and Sharepoint Server support
 [QuickXorHash](https://docs.microsoft.com/en-us/onedrive/developer/code-snippets/quickxorhash).
+
+Before rclone 1.62 the default hash for Onedrive Personal was `SHA1`.
+For rclone 1.62 and above the default for all Onedrive backends is
+`QuickXorHash`.
+
+Starting from July 2023 `SHA1` support is being phased out in Onedrive
+Personal in favour of `QuickXorHash`. If necessary the
+`--onedrive-hash-type` flag (or `hash_type` config option) can be used
+to select `SHA1` during the transition period if this is important
+your workflow.
 
 For all types of OneDrive you can use the `--checksum` flag.
 
@@ -516,6 +525,48 @@ Properties:
 - Env Var:     RCLONE_ONEDRIVE_LINK_PASSWORD
 - Type:        string
 - Required:    false
+
+#### --onedrive-hash-type
+
+Specify the hash in use for the backend.
+
+This specifies the hash type in use. If set to "auto" it will use the
+default hash which is is QuickXorHash.
+
+Before rclone 1.62 an SHA1 hash was used by default for Onedrive
+Personal. For 1.62 and later the default is to use a QuickXorHash for
+all onedrive types. If an SHA1 hash is desired then set this option
+accordingly.
+
+From July 2023 QuickXorHash will be the only available hash for
+both OneDrive for Business and OneDriver Personal.
+
+This can be set to "none" to not use any hashes.
+
+If the hash requested does not exist on the object, it will be
+returned as an empty string which is treated as a missing hash by
+rclone.
+
+
+Properties:
+
+- Config:      hash_type
+- Env Var:     RCLONE_ONEDRIVE_HASH_TYPE
+- Type:        string
+- Default:     "auto"
+- Examples:
+    - "auto"
+        - Rclone chooses the best hash
+    - "quickxor"
+        - QuickXor
+    - "sha1"
+        - SHA1
+    - "sha256"
+        - SHA256
+    - "crc32"
+        - CRC32
+    - "none"
+        - None - don't use any hashes
 
 #### --onedrive-encoding
 

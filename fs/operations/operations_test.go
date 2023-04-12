@@ -371,9 +371,14 @@ func TestSuffixName(t *testing.T) {
 		{"test.txt", "-suffix", false, "test.txt-suffix"},
 		{"test.txt", "-suffix", true, "test-suffix.txt"},
 		{"test.txt.csv", "-suffix", false, "test.txt.csv-suffix"},
-		{"test.txt.csv", "-suffix", true, "test.txt-suffix.csv"},
+		{"test.txt.csv", "-suffix", true, "test-suffix.txt.csv"},
 		{"test", "-suffix", false, "test-suffix"},
 		{"test", "-suffix", true, "test-suffix"},
+		{"test.html", "-suffix", true, "test-suffix.html"},
+		{"test.html.txt", "-suffix", true, "test-suffix.html.txt"},
+		{"test.csv.html.txt", "-suffix", true, "test-suffix.csv.html.txt"},
+		{"test.badext.csv.html.txt", "-suffix", true, "test.badext-suffix.csv.html.txt"},
+		{"test.badext", "-suffix", true, "test-suffix.badext"},
 	} {
 		ci.Suffix = test.suffix
 		ci.SuffixKeepExtension = test.keepExt
@@ -417,6 +422,75 @@ func TestDelete(t *testing.T) {
 	err = operations.Delete(ctx, r.Fremote)
 	require.NoError(t, err)
 	r.CheckRemoteItems(t, file3)
+}
+
+func isChunker(f fs.Fs) bool {
+	return strings.HasPrefix(f.Name(), "TestChunker")
+}
+
+func skipIfChunker(t *testing.T, f fs.Fs) {
+	if isChunker(f) {
+		t.Skip("Skipping test on chunker backend")
+	}
+}
+
+func TestMaxDelete(t *testing.T) {
+	ctx := context.Background()
+	ctx, ci := fs.AddConfig(ctx)
+	r := fstest.NewRun(t)
+	accounting.GlobalStats().ResetCounters()
+	ci.MaxDelete = 2
+	defer r.Finalise()
+	skipIfChunker(t, r.Fremote)                                                                                                                      // chunker does copy/delete on s3
+	file1 := r.WriteObject(ctx, "small", "1234567890", t2)                                                                                           // 10 bytes
+	file2 := r.WriteObject(ctx, "medium", "------------------------------------------------------------", t1)                                        // 60 bytes
+	file3 := r.WriteObject(ctx, "large", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", t1) // 100 bytes
+	r.CheckRemoteItems(t, file1, file2, file3)
+	err := operations.Delete(ctx, r.Fremote)
+
+	require.Error(t, err)
+	objects, _, _, err := operations.Count(ctx, r.Fremote)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), objects)
+}
+
+// TestMaxDeleteSizeLargeFile one of the files is larger than allowed
+func TestMaxDeleteSizeLargeFile(t *testing.T) {
+	ctx := context.Background()
+	ctx, ci := fs.AddConfig(ctx)
+	r := fstest.NewRun(t)
+	accounting.GlobalStats().ResetCounters()
+	ci.MaxDeleteSize = 70
+	defer r.Finalise()
+	skipIfChunker(t, r.Fremote)                                                                                                                      // chunker does copy/delete on s3
+	file1 := r.WriteObject(ctx, "small", "1234567890", t2)                                                                                           // 10 bytes
+	file2 := r.WriteObject(ctx, "medium", "------------------------------------------------------------", t1)                                        // 60 bytes
+	file3 := r.WriteObject(ctx, "large", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", t1) // 100 bytes
+	r.CheckRemoteItems(t, file1, file2, file3)
+
+	err := operations.Delete(ctx, r.Fremote)
+	require.Error(t, err)
+	r.CheckRemoteItems(t, file3)
+}
+
+func TestMaxDeleteSize(t *testing.T) {
+	ctx := context.Background()
+	ctx, ci := fs.AddConfig(ctx)
+	r := fstest.NewRun(t)
+	accounting.GlobalStats().ResetCounters()
+	ci.MaxDeleteSize = 160
+	defer r.Finalise()
+	skipIfChunker(t, r.Fremote)                                                                                                                      // chunker does copy/delete on s3
+	file1 := r.WriteObject(ctx, "small", "1234567890", t2)                                                                                           // 10 bytes
+	file2 := r.WriteObject(ctx, "medium", "------------------------------------------------------------", t1)                                        // 60 bytes
+	file3 := r.WriteObject(ctx, "large", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", t1) // 100 bytes
+	r.CheckRemoteItems(t, file1, file2, file3)
+
+	err := operations.Delete(ctx, r.Fremote)
+	require.Error(t, err)
+	objects, _, _, err := operations.Count(ctx, r.Fremote)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), objects) // 10 or 100 bytes
 }
 
 func TestRetry(t *testing.T) {
@@ -720,7 +794,7 @@ func TestCopyURL(t *testing.T) {
 	headerFilename := "headerfilename.txt"
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if status != 0 {
-			http.Error(w, "an error ocurred", status)
+			http.Error(w, "an error occurred", status)
 		}
 		if nameHeader {
 			w.Header().Set("Content-Disposition", `attachment; filename="folder\`+headerFilename+`"`)
@@ -794,7 +868,7 @@ func TestCopyURLToWriter(t *testing.T) {
 	status := 0
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if status != 0 {
-			http.Error(w, "an error ocurred", status)
+			http.Error(w, "an error occurred", status)
 			return
 		}
 		_, err := w.Write([]byte(contents))
@@ -1625,7 +1699,7 @@ func TestRcatMetadata(t *testing.T) {
 		gotMeta, err := fs.GetMetadata(ctx, o)
 		require.NoError(t, err)
 		// Check the specific user data we set is set
-		// Likey there will be other values
+		// Likely there will be other values
 		assert.Equal(t, "value", gotMeta["key"])
 		assert.Equal(t, "potato", gotMeta["sausage"])
 
@@ -1712,7 +1786,7 @@ func TestRcatSizeMetadata(t *testing.T) {
 		gotMeta, err := fs.GetMetadata(ctx, o)
 		require.NoError(t, err)
 		// Check the specific user data we set is set
-		// Likey there will be other values
+		// Likely there will be other values
 		assert.Equal(t, "value", gotMeta["key"])
 		assert.Equal(t, "potato", gotMeta["sausage"])
 	}
@@ -1769,7 +1843,7 @@ func TestCopyFileMaxTransfer(t *testing.T) {
 	r.CheckLocalItems(t, file1, file2, file3, file4)
 	r.CheckRemoteItems(t, file1)
 
-	if strings.HasPrefix(r.Fremote.Name(), "TestChunker") {
+	if isChunker(r.Fremote) {
 		t.Log("skipping remainder of test for chunker as it involves multiple transfers")
 		return
 	}

@@ -82,7 +82,8 @@ func init() {
 			saFile, _ := m.Get("service_account_file")
 			saCreds, _ := m.Get("service_account_credentials")
 			anonymous, _ := m.Get("anonymous")
-			if saFile != "" || saCreds != "" || anonymous == "true" {
+			envAuth, _ := m.Get("env_auth")
+			if saFile != "" || saCreds != "" || anonymous == "true" || envAuth == "true" {
 				return nil, nil
 			}
 			return oauthutil.ConfigOut("", &oauthutil.Options{
@@ -92,6 +93,9 @@ func init() {
 		Options: append(oauthutil.SharedOptions, []fs.Option{{
 			Name: "project_number",
 			Help: "Project number.\n\nOptional - needed only for list/create/delete buckets - see your developer console.",
+		}, {
+			Name: "user_project",
+			Help: "User project.\n\nOptional - needed only for requester pays.",
 		}, {
 			Name: "service_account_file",
 			Help: "Service Account Credentials JSON file path.\n\nLeave blank normally.\nNeeded only if you want use SA instead of interactive login." + env.ShellExpandHelp,
@@ -330,6 +334,17 @@ can't check the size and hash but the file contents will be decompressed.
 			Default: (encoder.Base |
 				encoder.EncodeCrLf |
 				encoder.EncodeInvalidUtf8),
+		}, {
+			Name:    "env_auth",
+			Help:    "Get GCP IAM credentials from runtime (environment variables or instance meta data if no env vars).\n\nOnly applies if service_account_file and service_account_credentials is blank.",
+			Default: false,
+			Examples: []fs.OptionExample{{
+				Value: "false",
+				Help:  "Enter credentials in the next step.",
+			}, {
+				Value: "true",
+				Help:  "Get GCP IAM credentials from the environment (env vars or IAM).",
+			}},
 		}}...),
 	})
 }
@@ -337,6 +352,7 @@ can't check the size and hash but the file contents will be decompressed.
 // Options defines the configuration for this backend
 type Options struct {
 	ProjectNumber             string               `config:"project_number"`
+	UserProject               string               `config:"user_project"`
 	ServiceAccountFile        string               `config:"service_account_file"`
 	ServiceAccountCredentials string               `config:"service_account_credentials"`
 	Anonymous                 bool                 `config:"anonymous"`
@@ -349,6 +365,7 @@ type Options struct {
 	Decompress                bool                 `config:"decompress"`
 	Endpoint                  string               `config:"endpoint"`
 	Enc                       encoder.MultiEncoder `config:"encoding"`
+	EnvAuth                   bool                 `config:"env_auth"`
 }
 
 // Fs represents a remote storage server
@@ -500,6 +517,11 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 		if err != nil {
 			return nil, fmt.Errorf("failed configuring Google Cloud Storage Service Account: %w", err)
 		}
+	} else if opt.EnvAuth {
+		oAuthClient, err = google.DefaultClient(ctx, storage.DevstorageFullControlScope)
+		if err != nil {
+			return nil, fmt.Errorf("failed to configure Google Cloud Storage: %w", err)
+		}
 	} else {
 		oAuthClient, _, err = oauthutil.NewClient(ctx, name, m, storageConfig)
 		if err != nil {
@@ -541,7 +563,11 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 		// Check to see if the object exists
 		encodedDirectory := f.opt.Enc.FromStandardPath(f.rootDirectory)
 		err = f.pacer.Call(func() (bool, error) {
-			_, err = f.svc.Objects.Get(f.rootBucket, encodedDirectory).Context(ctx).Do()
+			get := f.svc.Objects.Get(f.rootBucket, encodedDirectory).Context(ctx)
+			if f.opt.UserProject != "" {
+				get = get.UserProject(f.opt.UserProject)
+			}
+			_, err = get.Do()
 			return shouldRetry(ctx, err)
 		})
 		if err == nil {
@@ -601,6 +627,9 @@ func (f *Fs) list(ctx context.Context, bucket, directory, prefix string, addBuck
 		directory += "/"
 	}
 	list := f.svc.Objects.List(bucket).Prefix(directory).MaxResults(listChunks)
+	if f.opt.UserProject != "" {
+		list = list.UserProject(f.opt.UserProject)
+	}
 	if !recurse {
 		list = list.Delimiter("/")
 	}
@@ -707,6 +736,9 @@ func (f *Fs) listBuckets(ctx context.Context) (entries fs.DirEntries, err error)
 		return nil, errors.New("can't list buckets without project number")
 	}
 	listBuckets := f.svc.Buckets.List(f.opt.ProjectNumber).MaxResults(listChunks)
+	if f.opt.UserProject != "" {
+		listBuckets = listBuckets.UserProject(f.opt.UserProject)
+	}
 	for {
 		var buckets *storage.Buckets
 		err = f.pacer.Call(func() (bool, error) {
@@ -836,7 +868,11 @@ func (f *Fs) makeBucket(ctx context.Context, bucket string) (err error) {
 		// List something from the bucket to see if it exists.  Doing it like this enables the use of a
 		// service account that only has the "Storage Object Admin" role.  See #2193 for details.
 		err = f.pacer.Call(func() (bool, error) {
-			_, err = f.svc.Objects.List(bucket).MaxResults(1).Context(ctx).Do()
+			list := f.svc.Objects.List(bucket).MaxResults(1).Context(ctx)
+			if f.opt.UserProject != "" {
+				list = list.UserProject(f.opt.UserProject)
+			}
+			_, err = list.Do()
 			return shouldRetry(ctx, err)
 		})
 		if err == nil {
@@ -871,7 +907,11 @@ func (f *Fs) makeBucket(ctx context.Context, bucket string) (err error) {
 			if !f.opt.BucketPolicyOnly {
 				insertBucket.PredefinedAcl(f.opt.BucketACL)
 			}
-			_, err = insertBucket.Context(ctx).Do()
+			insertBucket = insertBucket.Context(ctx)
+			if f.opt.UserProject != "" {
+				insertBucket = insertBucket.UserProject(f.opt.UserProject)
+			}
+			_, err = insertBucket.Do()
 			return shouldRetry(ctx, err)
 		})
 	}, nil)
@@ -896,7 +936,11 @@ func (f *Fs) Rmdir(ctx context.Context, dir string) (err error) {
 	}
 	return f.cache.Remove(bucket, func() error {
 		return f.pacer.Call(func() (bool, error) {
-			err = f.svc.Buckets.Delete(bucket).Context(ctx).Do()
+			deleteBucket := f.svc.Buckets.Delete(bucket).Context(ctx)
+			if f.opt.UserProject != "" {
+				deleteBucket = deleteBucket.UserProject(f.opt.UserProject)
+			}
+			err = deleteBucket.Do()
 			return shouldRetry(ctx, err)
 		})
 	})
@@ -942,7 +986,11 @@ func (f *Fs) Copy(ctx context.Context, src fs.Object, remote string) (fs.Object,
 	var rewriteResponse *storage.RewriteResponse
 	for {
 		err = f.pacer.Call(func() (bool, error) {
-			rewriteResponse, err = rewriteRequest.Context(ctx).Do()
+			rewriteRequest = rewriteRequest.Context(ctx)
+			if f.opt.UserProject != "" {
+				rewriteRequest.UserProject(f.opt.UserProject)
+			}
+			rewriteResponse, err = rewriteRequest.Do()
 			return shouldRetry(ctx, err)
 		})
 		if err != nil {
@@ -1053,7 +1101,11 @@ func (o *Object) setMetaData(info *storage.Object) {
 func (o *Object) readObjectInfo(ctx context.Context) (object *storage.Object, err error) {
 	bucket, bucketPath := o.split()
 	err = o.fs.pacer.Call(func() (bool, error) {
-		object, err = o.fs.svc.Objects.Get(bucket, bucketPath).Context(ctx).Do()
+		get := o.fs.svc.Objects.Get(bucket, bucketPath).Context(ctx)
+		if o.fs.opt.UserProject != "" {
+			get = get.UserProject(o.fs.opt.UserProject)
+		}
+		object, err = get.Do()
 		return shouldRetry(ctx, err)
 	})
 	if err != nil {
@@ -1125,7 +1177,11 @@ func (o *Object) SetModTime(ctx context.Context, modTime time.Time) (err error) 
 		if !o.fs.opt.BucketPolicyOnly {
 			copyObject.DestinationPredefinedAcl(o.fs.opt.ObjectACL)
 		}
-		newObject, err = copyObject.Context(ctx).Do()
+		copyObject = copyObject.Context(ctx)
+		if o.fs.opt.UserProject != "" {
+			copyObject = copyObject.UserProject(o.fs.opt.UserProject)
+		}
+		newObject, err = copyObject.Do()
 		return shouldRetry(ctx, err)
 	})
 	if err != nil {
@@ -1142,6 +1198,9 @@ func (o *Object) Storable() bool {
 
 // Open an object for read
 func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (in io.ReadCloser, err error) {
+	if o.fs.opt.UserProject != "" {
+		o.url = o.url + "&userProject=" + o.fs.opt.UserProject
+	}
 	req, err := http.NewRequestWithContext(ctx, "GET", o.url, nil)
 	if err != nil {
 		return nil, err
@@ -1234,7 +1293,11 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 		if !o.fs.opt.BucketPolicyOnly {
 			insertObject.PredefinedAcl(o.fs.opt.ObjectACL)
 		}
-		newObject, err = insertObject.Context(ctx).Do()
+		insertObject = insertObject.Context(ctx)
+		if o.fs.opt.UserProject != "" {
+			insertObject = insertObject.UserProject(o.fs.opt.UserProject)
+		}
+		newObject, err = insertObject.Do()
 		return shouldRetry(ctx, err)
 	})
 	if err != nil {
@@ -1249,7 +1312,11 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 func (o *Object) Remove(ctx context.Context) (err error) {
 	bucket, bucketPath := o.split()
 	err = o.fs.pacer.Call(func() (bool, error) {
-		err = o.fs.svc.Objects.Delete(bucket, bucketPath).Context(ctx).Do()
+		deleteBucket := o.fs.svc.Objects.Delete(bucket, bucketPath).Context(ctx)
+		if o.fs.opt.UserProject != "" {
+			deleteBucket = deleteBucket.UserProject(o.fs.opt.UserProject)
+		}
+		err = deleteBucket.Do()
 		return shouldRetry(ctx, err)
 	})
 	return err

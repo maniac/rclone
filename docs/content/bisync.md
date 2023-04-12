@@ -146,9 +146,9 @@ The base directories on the both Path1 and Path2 filesystems must exist
 or bisync will fail. This is required for safety - that bisync can verify
 that both paths are valid.
 
-When using `--resync` a newer version of a file on the Path2 filesystem
-will be overwritten by the Path1 filesystem version.
-Carefully evaluate deltas using [--dry-run](/flags/#non-backend-flags).
+When using `--resync`, a newer version of a file either on Path1 or Path2
+filesystem, will overwrite the file on the other path (only the last version
+will be kept). Carefully evaluate deltas using [--dry-run](/flags/#non-backend-flags).
 
 For a resync run, one of the paths may be empty (no files in the path tree).
 The resync run should result in files on both paths, else a normal non-resync
@@ -596,7 +596,7 @@ quashed by adding `--quiet` to the bisync command line.
 # NOTICE: If you make changes to this file you MUST do a --resync run.
 #         Run with --dry-run to see what changes will be made.
 
-# Dropbox wont sync some files so filter them away here.
+# Dropbox won't sync some files so filter them away here.
 # See https://help.dropbox.com/installs-integrations/sync-uploads/files-not-syncing
 - .dropbox.attr
 - ~*.tmp
@@ -1008,7 +1008,7 @@ Your normal workflow might be as follows:
   Delete a single file.
 - `delete-glob <dir> <pattern>`
   Delete a group of files located one level deep in the given directory
-  with names maching a given glob pattern.
+  with names matching a given glob pattern.
 - `touch-glob YYYY-MM-DD <dir> <pattern>`
   Change modification time on a group of files.
 - `touch-copy YYYY-MM-DD <source-file> <dest-dir>`

@@ -500,10 +500,9 @@ func Copy(ctx context.Context, f fs.Fs, dst fs.Object, remote string, src fs.Obj
 		}
 	}
 	if newDst != nil && src.String() != newDst.String() {
-		fs.Infof(src, "%s to: %s", actionTaken, newDst.String())
-	} else {
-		fs.Infof(src, actionTaken)
+		actionTaken = fmt.Sprintf("%s to: %s", actionTaken, newDst.String())
 	}
+	fs.Infof(src, "%s%s", actionTaken, fs.LogValueHide("size", fs.SizeSuffix(src.Size())))
 	return newDst, err
 }
 
@@ -544,7 +543,7 @@ func SameObject(src, dst fs.Object) bool {
 // be nil.
 func Move(ctx context.Context, fdst fs.Fs, dst fs.Object, remote string, src fs.Object) (newDst fs.Object, err error) {
 	ci := fs.GetConfig(ctx)
-	tr := accounting.Stats(ctx).NewCheckingTransfer(src)
+	tr := accounting.Stats(ctx).NewCheckingTransfer(src, "moving")
 	defer func() {
 		if err == nil {
 			accounting.Stats(ctx).Renames(1)
@@ -619,9 +618,24 @@ func SuffixName(ctx context.Context, remote string) string {
 		return remote
 	}
 	if ci.SuffixKeepExtension {
-		ext := path.Ext(remote)
-		base := remote[:len(remote)-len(ext)]
-		return base + ci.Suffix + ext
+		var (
+			base  = remote
+			exts  = ""
+			first = true
+			ext   = path.Ext(remote)
+		)
+		for ext != "" {
+			// Look second and subsequent extensions in mime types.
+			// If they aren't found then don't keep it as an extension.
+			if !first && mime.TypeByExtension(ext) == "" {
+				break
+			}
+			base = base[:len(base)-len(ext)]
+			exts = ext + exts
+			first = false
+			ext = path.Ext(base)
+		}
+		return base + ci.Suffix + exts
 	}
 	return remote + ci.Suffix
 }
@@ -632,14 +646,13 @@ func SuffixName(ctx context.Context, remote string) string {
 // If backupDir is set then it moves the file to there instead of
 // deleting
 func DeleteFileWithBackupDir(ctx context.Context, dst fs.Object, backupDir fs.Fs) (err error) {
-	ci := fs.GetConfig(ctx)
-	tr := accounting.Stats(ctx).NewCheckingTransfer(dst)
+	tr := accounting.Stats(ctx).NewCheckingTransfer(dst, "deleting")
 	defer func() {
 		tr.Done(ctx, err)
 	}()
-	numDeletes := accounting.Stats(ctx).Deletes(1)
-	if ci.MaxDelete != -1 && numDeletes > ci.MaxDelete {
-		return fserrors.FatalError(errors.New("--max-delete threshold reached"))
+	err = accounting.Stats(ctx).DeleteFile(ctx, dst.Size())
+	if err != nil {
+		return err
 	}
 	action, actioned := "delete", "Deleted"
 	if backupDir != nil {
@@ -678,11 +691,11 @@ func DeleteFile(ctx context.Context, dst fs.Object) (err error) {
 func DeleteFilesWithBackupDir(ctx context.Context, toBeDeleted fs.ObjectsChan, backupDir fs.Fs) error {
 	var wg sync.WaitGroup
 	ci := fs.GetConfig(ctx)
-	wg.Add(ci.Transfers)
+	wg.Add(ci.Checkers)
 	var errorCount int32
 	var fatalErrorCount int32
 
-	for i := 0; i < ci.Transfers; i++ {
+	for i := 0; i < ci.Checkers; i++ {
 		go func() {
 			defer wg.Done()
 			for dst := range toBeDeleted {
@@ -838,8 +851,8 @@ func ListFn(ctx context.Context, f fs.Fs, fn func(fs.Object)) error {
 	})
 }
 
-// mutex for synchronized output
-var outMutex sync.Mutex
+// StdoutMutex mutex for synchronized output on stdout
+var StdoutMutex sync.Mutex
 
 // SyncPrintf is a global var holding the Printf function used in syncFprintf so that it can be overridden
 // Note, despite name, does not provide sync and should not be called directly
@@ -855,8 +868,8 @@ var SyncPrintf = func(format string, a ...interface{}) {
 // Updated to print to terminal if no writer is defined
 // This special behavior is used to allow easier replacement of the print to terminal code by progress
 func syncFprintf(w io.Writer, format string, a ...interface{}) {
-	outMutex.Lock()
-	defer outMutex.Unlock()
+	StdoutMutex.Lock()
+	defer StdoutMutex.Unlock()
 	if w == nil || w == os.Stdout {
 		SyncPrintf(format, a...)
 	} else {
@@ -938,7 +951,7 @@ func List(ctx context.Context, f fs.Fs, w io.Writer) error {
 func ListLong(ctx context.Context, f fs.Fs, w io.Writer) error {
 	ci := fs.GetConfig(ctx)
 	return ListFn(ctx, f, func(o fs.Object) {
-		tr := accounting.Stats(ctx).NewCheckingTransfer(o)
+		tr := accounting.Stats(ctx).NewCheckingTransfer(o, "listing")
 		defer func() {
 			tr.Done(ctx, nil)
 		}()
@@ -996,7 +1009,7 @@ func hashSum(ctx context.Context, ht hash.Type, base64Encoded bool, downloadFlag
 			return "ERROR", fmt.Errorf("hasher returned an error: %w", err)
 		}
 	} else {
-		tr := accounting.Stats(ctx).NewCheckingTransfer(o)
+		tr := accounting.Stats(ctx).NewCheckingTransfer(o, "hashing")
 		defer func() {
 			tr.Done(ctx, err)
 		}()
@@ -1022,7 +1035,12 @@ func hashSum(ctx context.Context, ht hash.Type, base64Encoded bool, downloadFlag
 // Updated to perform multiple hashes concurrently
 func HashLister(ctx context.Context, ht hash.Type, outputBase64 bool, downloadFlag bool, f fs.Fs, w io.Writer) error {
 	width := hash.Width(ht, outputBase64)
-	concurrencyControl := make(chan struct{}, fs.GetConfig(ctx).Transfers)
+	// Use --checkers concurrency unless downloading in which case use --transfers
+	concurrency := fs.GetConfig(ctx).Checkers
+	if downloadFlag {
+		concurrency = fs.GetConfig(ctx).Transfers
+	}
+	concurrencyControl := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
 	err := ListFn(ctx, f, func(o fs.Object) {
 		wg.Add(1)
@@ -1173,7 +1191,7 @@ func Purge(ctx context.Context, f fs.Fs, dir string) (err error) {
 // obeys includes and excludes.
 func Delete(ctx context.Context, f fs.Fs) error {
 	ci := fs.GetConfig(ctx)
-	delChan := make(fs.ObjectsChan, ci.Transfers)
+	delChan := make(fs.ObjectsChan, ci.Checkers)
 	delErr := make(chan error, 1)
 	go func() {
 		delErr <- DeleteFiles(ctx, delChan)
@@ -1929,7 +1947,6 @@ func moveOrCopyFile(ctx context.Context, fdst fs.Fs, fsrc fs.Fs, dstFileName str
 
 		_, err = Op(ctx, fdst, dstObj, dstFileName, srcObj)
 	} else {
-		tr := accounting.Stats(ctx).NewCheckingTransfer(srcObj)
 		if !cp {
 			if ci.IgnoreExisting {
 				fs.Debugf(srcObj, "Not removing source file as destination file exists and --ignore-existing is set")
@@ -1937,7 +1954,6 @@ func moveOrCopyFile(ctx context.Context, fdst fs.Fs, fsrc fs.Fs, dstFileName str
 				err = DeleteFile(ctx, srcObj)
 			}
 		}
-		tr.Done(ctx, err)
 	}
 	return err
 }
@@ -2189,9 +2205,9 @@ func DirMove(ctx context.Context, f fs.Fs, srcRemote, dstRemote string) (err err
 		o       fs.Object
 		newPath string
 	}
-	renames := make(chan rename, ci.Transfers)
+	renames := make(chan rename, ci.Checkers)
 	g, gCtx := errgroup.WithContext(context.Background())
-	for i := 0; i < ci.Transfers; i++ {
+	for i := 0; i < ci.Checkers; i++ {
 		g.Go(func() error {
 			for job := range renames {
 				dstOverwritten, _ := f.NewObject(gCtx, job.newPath)
@@ -2281,7 +2297,7 @@ func GetFsInfo(f fs.Fs) *FsInfo {
 }
 
 var (
-	interactiveMu sync.Mutex
+	interactiveMu sync.Mutex // protects the following variables
 	skipped       = map[string]bool{}
 )
 
@@ -2289,14 +2305,22 @@ var (
 //
 // Call with interactiveMu held
 func skipDestructiveChoose(ctx context.Context, subject interface{}, action string) (skip bool) {
-	fmt.Printf("rclone: %s \"%v\"?\n", action, subject)
-	switch i := config.CommandDefault([]string{
+	// Lock the StdoutMutex - must not call fs.Log anything
+	// otherwise it will deadlock with --interactive --progress
+	StdoutMutex.Lock()
+
+	fmt.Printf("\nrclone: %s \"%v\"?\n", action, subject)
+	i := config.CommandDefault([]string{
 		"yYes, this is OK",
 		"nNo, skip this",
 		fmt.Sprintf("sSkip all %s operations with no more questions", action),
 		fmt.Sprintf("!Do all %s operations with no more questions", action),
 		"qExit rclone now.",
-	}, 0); i {
+	}, 0)
+
+	StdoutMutex.Unlock()
+
+	switch i {
 	case 'y':
 		skip = false
 	case 'n':
