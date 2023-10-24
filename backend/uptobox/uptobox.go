@@ -43,8 +43,9 @@ func init() {
 		Description: "Uptobox",
 		NewFs:       NewFs,
 		Options: []fs.Option{{
-			Help: "Your access token.\n\nGet it from https://uptobox.com/my_account.",
-			Name: "access_token",
+			Help:      "Your access token.\n\nGet it from https://uptobox.com/my_account.",
+			Name:      "access_token",
+			Sensitive: true,
 		}, {
 			Help:     "Set to make uploaded files private",
 			Name:     "private",
@@ -678,7 +679,7 @@ func (f *Fs) Rmdir(ctx context.Context, dir string) error {
 	if err != nil {
 		return err
 	}
-	if info.Data.CurrentFolder.FileCount > 0 {
+	if len(info.Data.Folders) > 0 || len(info.Data.Files) > 0 {
 		return fs.ErrorDirectoryNotEmpty
 	}
 

@@ -877,6 +877,10 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 		opt:       *opt,
 		upstreams: usedUpstreams,
 	}
+	err = upstream.Prepare(f.upstreams)
+	if err != nil {
+		return nil, err
+	}
 	f.actionPolicy, err = policy.Get(opt.ActionPolicy)
 	if err != nil {
 		return nil, err
@@ -902,7 +906,7 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 		ReadMetadata:            true,
 		WriteMetadata:           true,
 		UserMetadata:            true,
-		// PartialUploads:          true // this causes the fs/sync tests to fail
+		PartialUploads:          true,
 	}).Fill(ctx, f)
 	canMove, slowHash := true, false
 	for _, f := range upstreams {
