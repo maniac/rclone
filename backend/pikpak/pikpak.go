@@ -23,6 +23,7 @@ package pikpak
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -37,10 +38,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/rclone/rclone/backend/pikpak/api"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/accounting"
@@ -50,6 +52,7 @@ import (
 	"github.com/rclone/rclone/fs/config/configstruct"
 	"github.com/rclone/rclone/fs/config/obscure"
 	"github.com/rclone/rclone/fs/fserrors"
+	"github.com/rclone/rclone/fs/fshttp"
 	"github.com/rclone/rclone/fs/hash"
 	"github.com/rclone/rclone/lib/atexit"
 	"github.com/rclone/rclone/lib/dircache"
@@ -63,15 +66,17 @@ import (
 
 // Constants
 const (
-	rcloneClientID              = "YNxT9w7GMdWvEOKa"
-	rcloneEncryptedClientSecret = "aqrmB6M1YJ1DWCBxVxFSjFo7wzWEky494YMmkqgAl1do1WKOe2E"
-	minSleep                    = 100 * time.Millisecond
-	maxSleep                    = 2 * time.Second
-	taskWaitTime                = 500 * time.Millisecond
-	decayConstant               = 2 // bigger for slower decay, exponential
-	rootURL                     = "https://api-drive.mypikpak.com"
-	minChunkSize                = fs.SizeSuffix(s3manager.MinUploadPartSize)
-	defaultUploadConcurrency    = s3manager.DefaultUploadConcurrency
+	clientID                 = "YUMx5nI8ZU8Ap8pm"
+	clientVersion            = "2.0.0"
+	packageName              = "mypikpak.com"
+	defaultUserAgent         = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:129.0) Gecko/20100101 Firefox/129.0"
+	minSleep                 = 100 * time.Millisecond
+	maxSleep                 = 2 * time.Second
+	taskWaitTime             = 500 * time.Millisecond
+	decayConstant            = 2 // bigger for slower decay, exponential
+	rootURL                  = "https://api-drive.mypikpak.com"
+	minChunkSize             = fs.SizeSuffix(manager.MinUploadPartSize)
+	defaultUploadConcurrency = manager.DefaultUploadConcurrency
 )
 
 // Globals
@@ -84,42 +89,52 @@ var (
 			TokenURL:  "https://user.mypikpak.com/v1/auth/token",
 			AuthStyle: oauth2.AuthStyleInParams,
 		},
-		ClientID:     rcloneClientID,
-		ClientSecret: obscure.MustReveal(rcloneEncryptedClientSecret),
-		RedirectURL:  oauthutil.RedirectURL,
+		ClientID:    clientID,
+		RedirectURL: oauthutil.RedirectURL,
 	}
 )
 
-// Returns OAuthOptions modified for pikpak
-func pikpakOAuthOptions() []fs.Option {
-	opts := []fs.Option{}
-	for _, opt := range oauthutil.SharedOptions {
-		if opt.Name == config.ConfigClientID {
-			opt.Advanced = true
-		} else if opt.Name == config.ConfigClientSecret {
-			opt.Advanced = true
-		}
-		opts = append(opts, opt)
-	}
-	return opts
-}
-
 // pikpakAutorize retrieves OAuth token using user/pass and save it to rclone.conf
 func pikpakAuthorize(ctx context.Context, opt *Options, name string, m configmap.Mapper) error {
-	// override default client id/secret
-	if id, ok := m.Get("client_id"); ok && id != "" {
-		oauthConfig.ClientID = id
-	}
-	if secret, ok := m.Get("client_secret"); ok && secret != "" {
-		oauthConfig.ClientSecret = secret
+	if opt.Username == "" {
+		return errors.New("no username")
 	}
 	pass, err := obscure.Reveal(opt.Password)
 	if err != nil {
 		return fmt.Errorf("failed to decode password - did you obscure it?: %w", err)
 	}
-	t, err := oauthConfig.PasswordCredentialsToken(ctx, opt.Username, pass)
+	// new device id if necessary
+	if len(opt.DeviceID) != 32 {
+		opt.DeviceID = genDeviceID()
+		m.Set("device_id", opt.DeviceID)
+		fs.Infof(nil, "Using new device id %q", opt.DeviceID)
+	}
+	opts := rest.Opts{
+		Method:  "POST",
+		RootURL: "https://user.mypikpak.com/v1/auth/signin",
+	}
+	req := map[string]string{
+		"username":  opt.Username,
+		"password":  pass,
+		"client_id": clientID,
+	}
+	var token api.Token
+	rst := newPikpakClient(getClient(ctx, opt), opt).SetCaptchaTokener(ctx, m)
+	_, err = rst.CallJSON(ctx, &opts, req, &token)
+	if apiErr, ok := err.(*api.Error); ok {
+		if apiErr.Reason == "captcha_invalid" && apiErr.Code == 4002 {
+			rst.captcha.Invalidate()
+			_, err = rst.CallJSON(ctx, &opts, req, &token)
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("failed to retrieve token using username/password: %w", err)
+	}
+	t := &oauth2.Token{
+		AccessToken:  token.AccessToken,
+		TokenType:    token.TokenType,
+		RefreshToken: token.RefreshToken,
+		Expiry:       token.Expiry(),
 	}
 	return oauthutil.PutToken(name, m, t, false)
 }
@@ -159,7 +174,7 @@ func init() {
 			}
 			return nil, fmt.Errorf("unknown state %q", config.State)
 		},
-		Options: append(pikpakOAuthOptions(), []fs.Option{{
+		Options: []fs.Option{{
 			Name:      "user",
 			Help:      "Pikpak username.",
 			Required:  true,
@@ -169,6 +184,18 @@ func init() {
 			Help:       "Pikpak password.",
 			Required:   true,
 			IsPassword: true,
+		}, {
+			Name:      "device_id",
+			Help:      "Device ID used for authorization.",
+			Advanced:  true,
+			Sensitive: true,
+		}, {
+			Name:     "user_agent",
+			Default:  defaultUserAgent,
+			Advanced: true,
+			Help: fmt.Sprintf(`HTTP user agent for pikpak.
+
+Defaults to "%s" or "--pikpak-user-agent" provided on command line.`, defaultUserAgent),
 		}, {
 			Name: "root_folder_id",
 			Help: `ID of the root folder.
@@ -247,7 +274,7 @@ this may help to speed up the transfers.`,
 				encoder.EncodeRightSpace |
 				encoder.EncodeRightPeriod |
 				encoder.EncodeInvalidUtf8),
-		}}...),
+		}},
 	})
 }
 
@@ -255,6 +282,9 @@ this may help to speed up the transfers.`,
 type Options struct {
 	Username            string               `config:"user"`
 	Password            string               `config:"pass"`
+	UserID              string               `config:"user_id"` // only available during runtime
+	DeviceID            string               `config:"device_id"`
+	UserAgent           string               `config:"user_agent"`
 	RootFolderID        string               `config:"root_folder_id"`
 	UseTrash            bool                 `config:"use_trash"`
 	TrashedOnly         bool                 `config:"trashed_only"`
@@ -270,7 +300,7 @@ type Fs struct {
 	root         string             // the path we are working on
 	opt          Options            // parsed options
 	features     *fs.Features       // optional features
-	rst          *rest.Client       // the connection to the server
+	rst          *pikpakClient      // the connection to the server
 	dirCache     *dircache.DirCache // Map of directory path to directory id
 	pacer        *fs.Pacer          // pacer for API calls
 	rootFolderID string             // the id of the root folder
@@ -427,6 +457,12 @@ func (f *Fs) shouldRetry(ctx context.Context, resp *http.Response, err error) (b
 		} else if apiErr.Reason == "file_space_not_enough" {
 			// "file_space_not_enough" (8): Storage space is not enough
 			return false, fserrors.FatalError(err)
+		} else if apiErr.Reason == "captcha_invalid" && apiErr.Code == 9 {
+			// "captcha_invalid" (9): Verification code is invalid
+			// This error occurred on the POST:/drive/v1/files endpoint
+			// when a zero-byte file was uploaded with an invalid captcha token
+			f.rst.captcha.Invalidate()
+			return true, err
 		}
 	}
 
@@ -450,13 +486,36 @@ func errorHandler(resp *http.Response) error {
 	return errResponse
 }
 
+// getClient makes an http client according to the options
+func getClient(ctx context.Context, opt *Options) *http.Client {
+	// Override few config settings and create a client
+	newCtx, ci := fs.AddConfig(ctx)
+	ci.UserAgent = opt.UserAgent
+	return fshttp.NewClient(newCtx)
+}
+
 // newClientWithPacer sets a new http/rest client with a pacer to Fs
 func (f *Fs) newClientWithPacer(ctx context.Context) (err error) {
-	f.client, _, err = oauthutil.NewClient(ctx, f.name, f.m, oauthConfig)
+	var ts *oauthutil.TokenSource
+	f.client, ts, err = oauthutil.NewClientWithBaseClient(ctx, f.name, f.m, oauthConfig, getClient(ctx, &f.opt))
 	if err != nil {
 		return fmt.Errorf("failed to create oauth client: %w", err)
 	}
-	f.rst = rest.NewClient(f.client).SetRoot(rootURL).SetErrorHandler(errorHandler)
+	token, err := ts.Token()
+	if err != nil {
+		return err
+	}
+	// parse user_id from oauth access token for later use
+	if parts := strings.Split(token.AccessToken, "."); len(parts) > 1 {
+		jsonStr, _ := base64.URLEncoding.DecodeString(parts[1] + "===")
+		info := struct {
+			UserID string `json:"sub,omitempty"`
+		}{}
+		if jsonErr := json.Unmarshal(jsonStr, &info); jsonErr == nil {
+			f.opt.UserID = info.UserID
+		}
+	}
+	f.rst = newPikpakClient(f.client, &f.opt).SetCaptchaTokener(ctx, f.m)
 	f.pacer = fs.NewPacer(ctx, pacer.NewDefault(pacer.MinSleep(minSleep), pacer.MaxSleep(maxSleep), pacer.DecayConstant(decayConstant)))
 	return nil
 }
@@ -490,7 +549,18 @@ func newFs(ctx context.Context, name, path string, m configmap.Mapper) (*Fs, err
 		NoMultiThreading:        true, // can't have multiple threads downloading
 	}).Fill(ctx, f)
 
+	// new device id if necessary
+	if len(f.opt.DeviceID) != 32 {
+		f.opt.DeviceID = genDeviceID()
+		m.Set("device_id", f.opt.DeviceID)
+		fs.Infof(nil, "Using new device id %q", f.opt.DeviceID)
+	}
+
 	if err := f.newClientWithPacer(ctx); err != nil {
+		// re-authorize if necessary
+		if strings.Contains(err.Error(), "invalid_grant") {
+			return f, f.reAuthorize(ctx)
+		}
 		return nil, err
 	}
 
@@ -1016,6 +1086,7 @@ func (f *Fs) createObject(ctx context.Context, remote string, modTime time.Time,
 	o = &Object{
 		fs:      f,
 		remote:  remote,
+		parent:  dirID,
 		size:    size,
 		modTime: modTime,
 		linkMu:  new(sync.Mutex),
@@ -1048,7 +1119,7 @@ func (f *Fs) Move(ctx context.Context, src fs.Object, remote string) (fs.Object,
 		return nil, err
 	}
 
-	// Create temporary object
+	// Create temporary object - still missing id, mimeType, gcid, md5sum
 	dstObj, dstLeaf, dstParentID, err := f.createObject(ctx, remote, srcObj.modTime, srcObj.size)
 	if err != nil {
 		return nil, err
@@ -1060,7 +1131,12 @@ func (f *Fs) Move(ctx context.Context, src fs.Object, remote string) (fs.Object,
 			return nil, err
 		}
 	}
+	// Manually update info of moved object to save API calls
 	dstObj.id = srcObj.id
+	dstObj.mimeType = srcObj.mimeType
+	dstObj.gcid = srcObj.gcid
+	dstObj.md5sum = srcObj.md5sum
+	dstObj.hasMetaData = true
 
 	if srcLeaf != dstLeaf {
 		// Rename
@@ -1068,16 +1144,7 @@ func (f *Fs) Move(ctx context.Context, src fs.Object, remote string) (fs.Object,
 		if err != nil {
 			return nil, fmt.Errorf("move: couldn't rename moved file: %w", err)
 		}
-		err = dstObj.setMetaData(info)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		// Update info
-		err = dstObj.readMetaData(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("move: couldn't locate moved file: %w", err)
-		}
+		return dstObj, dstObj.setMetaData(info)
 	}
 	return dstObj, nil
 }
@@ -1117,7 +1184,7 @@ func (f *Fs) Copy(ctx context.Context, src fs.Object, remote string) (fs.Object,
 		return nil, err
 	}
 
-	// Create temporary object
+	// Create temporary object - still missing id, mimeType, gcid, md5sum
 	dstObj, dstLeaf, dstParentID, err := f.createObject(ctx, remote, srcObj.modTime, srcObj.size)
 	if err != nil {
 		return nil, err
@@ -1130,6 +1197,12 @@ func (f *Fs) Copy(ctx context.Context, src fs.Object, remote string) (fs.Object,
 	// Copy the object
 	if err := f.copyObjects(ctx, []string{srcObj.id}, dstParentID); err != nil {
 		return nil, fmt.Errorf("couldn't copy file: %w", err)
+	}
+	// Update info of the copied object with new parent but source name
+	if info, err := dstObj.fs.readMetaDataForPath(ctx, srcObj.remote); err != nil {
+		return nil, fmt.Errorf("copy: couldn't locate copied file: %w", err)
+	} else if err = dstObj.setMetaData(info); err != nil {
+		return nil, err
 	}
 
 	// Can't copy and change name in one step so we have to check if we have
@@ -1145,16 +1218,7 @@ func (f *Fs) Copy(ctx context.Context, src fs.Object, remote string) (fs.Object,
 		if err != nil {
 			return nil, fmt.Errorf("copy: couldn't rename copied file: %w", err)
 		}
-		err = dstObj.setMetaData(info)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		// Update info
-		err = dstObj.readMetaData(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("copy: couldn't locate copied file: %w", err)
-		}
+		return dstObj, dstObj.setMetaData(info)
 	}
 	return dstObj, nil
 }
@@ -1194,32 +1258,33 @@ func (f *Fs) uploadByForm(ctx context.Context, in io.Reader, name string, size i
 
 func (f *Fs) uploadByResumable(ctx context.Context, in io.Reader, name string, size int64, resumable *api.Resumable) (err error) {
 	p := resumable.Params
-	endpoint := strings.Join(strings.Split(p.Endpoint, ".")[1:], ".") // "mypikpak.com"
 
-	cfg := &aws.Config{
-		Credentials: credentials.NewStaticCredentials(p.AccessKeyID, p.AccessKeySecret, p.SecurityToken),
-		Region:      aws.String("pikpak"),
-		Endpoint:    &endpoint,
-	}
-	sess, err := session.NewSession(cfg)
+	// Create a credentials provider
+	creds := credentials.NewStaticCredentialsProvider(p.AccessKeyID, p.AccessKeySecret, p.SecurityToken)
+
+	cfg, err := awsconfig.LoadDefaultConfig(ctx,
+		awsconfig.WithCredentialsProvider(creds),
+		awsconfig.WithRegion("pikpak"))
 	if err != nil {
 		return
 	}
-	partSize := chunksize.Calculator(name, size, s3manager.MaxUploadParts, f.opt.ChunkSize)
 
-	// Create an uploader with the session and custom options
-	uploader := s3manager.NewUploader(sess, func(u *s3manager.Uploader) {
+	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.BaseEndpoint = aws.String("https://mypikpak.com/")
+	})
+	partSize := chunksize.Calculator(name, size, int(manager.MaxUploadParts), f.opt.ChunkSize)
+
+	// Create an uploader with custom options
+	uploader := manager.NewUploader(client, func(u *manager.Uploader) {
 		u.PartSize = int64(partSize)
 		u.Concurrency = f.opt.UploadConcurrency
 	})
-	// Upload input parameters
-	uParams := &s3manager.UploadInput{
+	// Perform an upload
+	_, err = uploader.Upload(ctx, &s3.PutObjectInput{
 		Bucket: &p.Bucket,
 		Key:    &p.Key,
 		Body:   in,
-	}
-	// Perform an upload
-	_, err = uploader.UploadWithContext(ctx, uParams)
+	})
 	return
 }
 
@@ -1252,6 +1317,12 @@ func (f *Fs) upload(ctx context.Context, in io.Reader, leaf, dirID, gcid string,
 		return nil, fmt.Errorf("invalid response: %+v", new)
 	} else if new.File.Phase == api.PhaseTypeComplete {
 		// early return; in case of zero-byte objects
+		if acc, ok := in.(*accounting.Account); ok && acc != nil {
+			// if `in io.Reader` is still in type of `*accounting.Account` (meaning that it is unused)
+			// it is considered as a server side copy as no incoming/outgoing traffic occur at all
+			acc.ServerSideTransferStart()
+			acc.ServerSideCopyEnd(size)
+		}
 		return new.File, nil
 	}
 
@@ -1700,19 +1771,30 @@ func (o *Object) upload(ctx context.Context, in io.Reader, src fs.ObjectInfo, wi
 	}
 
 	// Calculate gcid; grabbed from package jottacloud
-	var gcid string
-	// unwrap the accounting from the input, we use wrap to put it
-	// back on after the buffering
-	var wrap accounting.WrapFn
-	in, wrap = accounting.UnWrap(in)
-	var cleanup func()
-	gcid, in, cleanup, err = readGcid(in, size, int64(o.fs.opt.HashMemoryThreshold))
-	defer cleanup()
-	if err != nil {
-		return fmt.Errorf("failed to calculate gcid: %w", err)
+	gcid, err := o.fs.getGcid(ctx, src)
+	if err != nil || gcid == "" {
+		fs.Debugf(o, "calculating gcid: %v", err)
+		if srcObj := unWrapObjectInfo(src); srcObj != nil && srcObj.Fs().Features().IsLocal {
+			// No buffering; directly calculate gcid from source
+			rc, err := srcObj.Open(ctx)
+			if err != nil {
+				return fmt.Errorf("failed to open src: %w", err)
+			}
+			defer fs.CheckClose(rc, &err)
+
+			if gcid, err = calcGcid(rc, srcObj.Size()); err != nil {
+				return fmt.Errorf("failed to calculate gcid: %w", err)
+			}
+		} else {
+			var cleanup func()
+			gcid, in, cleanup, err = readGcid(in, size, int64(o.fs.opt.HashMemoryThreshold))
+			defer cleanup()
+			if err != nil {
+				return fmt.Errorf("failed to calculate gcid: %w", err)
+			}
+		}
 	}
-	// Wrap the accounting back onto the stream
-	in = wrap(in)
+	fs.Debugf(o, "gcid = %s", gcid)
 
 	if !withTemp {
 		info, err := o.fs.upload(ctx, in, leaf, dirID, gcid, size, options...)

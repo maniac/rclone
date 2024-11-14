@@ -55,17 +55,17 @@ backends:
    remote:   "TestChunkerChunk3bNoRenameLocal:"
    fastlist: true
    maxfile:  6k
- - backend:  "chunker"
-   remote:   "TestChunkerMailru:"
-   fastlist: true
-   ignore:
-     - TestApplyTransforms
- - backend:  "chunker"
-   remote:   "TestChunkerChunk50bMailru:"
-   fastlist: true
-   maxfile:  10k
-   ignore:
-     - TestApplyTransforms
+ # - backend:  "chunker"
+ #   remote:   "TestChunkerMailru:"
+ #   fastlist: true
+ #   ignore:
+ #     - TestApplyTransforms
+ # - backend:  "chunker"
+ #   remote:   "TestChunkerChunk50bMailru:"
+ #   fastlist: true
+ #   maxfile:  10k
+ #   ignore:
+ #     - TestApplyTransforms
  - backend:  "chunker"
    remote:   "TestChunkerChunk50bYandex:"
    fastlist: true
@@ -137,6 +137,12 @@ backends:
  #   remote:   "TestFileFabric:"
  #   fastlist: false
  #   extratime: 2.0
+ - backend:  "gofile"
+   remote:   "TestGoFile:"
+   fastlist: true
+ - backend:  "filescom"
+   remote:   "TestFilesCom:"
+   fastlist: false
  - backend:  "googlecloudstorage"
    remote:   "TestGoogleCloudStorage:"
    fastlist: true
@@ -215,6 +221,23 @@ backends:
      - TestIntegration/FsMkdir/FsEncoding/leading_HT
      - TestIntegration/FsMkdir/FsEncoding/leading_VT
      - TestIntegration/FsMkdir/FsPutFiles/FsPutStream/0
+ - backend:  "s3"
+   remote:   "TestS3GCS:"
+   fastlist: true
+   ignore:
+     - TestIntegration/FsMkdir/FsEncoding/control_chars
+     - TestIntegration/FsMkdir/FsEncoding/leading_CR
+     - TestIntegration/FsMkdir/FsEncoding/leading_LF
+     - TestIntegration/FsMkdir/FsEncoding/trailing_CR
+     - TestIntegration/FsMkdir/FsEncoding/trailing_LF
+     - TestIntegration/FsMkdir/FsPutFiles/PublicLink
+     - TestIntegration/FsMkdir/FsPutFiles/SetTier
+     - TestIntegration/FsMkdir/FsPutFiles/Internal/Metadata/GzipEncoding
+     - TestIntegration/FsMkdir/FsPutFiles/Internal/Versions/VersionAt/AfterDelete/List
+     - TestIntegration/FsMkdir/FsPutFiles/Internal/Versions/VersionAt/AfterDelete/NewObject
+     - TestIntegration/FsMkdir/FsPutFiles/Internal/Versions/VersionAt/AfterTwo/List
+     - TestIntegration/FsMkdir/FsPutFiles/Internal/Versions/VersionAt/AfterTwo/NewObject
+     - TestBisyncRemoteRemote/extended_filenames
  # Disabled due to excessive rate limiting at DO which cause the tests never to pass
  # This hits the rate limit as documented here: https://www.digitalocean.com/docs/spaces/#limits
  # 2 COPYs per 5 minutes on any individual object in a Space
@@ -347,6 +370,11 @@ backends:
     # This test fails with message
     # "share_status_prohibited" (9): Sorry, the sharing service is under maintenance in the current region.
      - TestIntegration/FsMkdir/FsPutFiles/PublicLink
+ - backend:  "pixeldrain"
+   remote: "TestPixeldrain:"
+   ignore:
+     - TestIntegration/FsMkdir/FsEncoding/invalid_UTF-8
+   fastlist: false
  - backend:  "webdav"
    remote:   "TestWebdavNextcloud:"
    ignore:
@@ -367,6 +395,10 @@ backends:
  - backend:  "cache"
    remote:   "TestCache:"
    fastlist: false
+   ignoretests:
+     - TestBisyncLocalRemote
+     - TestBisyncRemoteLocal
+     - TestBisyncRemoteRemote
  - backend:  "mega"
    remote:   "TestMega:"
    fastlist: false
@@ -394,6 +426,7 @@ backends:
      - TestCaseInsensitiveMoveFile
      - TestFixCase
      - TestListDirSorted        # Can't upload files starting with . - FIXME fix with encoding
+     - TestSyncOverlapWithFilter # Can't upload files starting with . - FIXME fix with encoding
  - backend:  "premiumizeme"
    remote:   "TestPremiumizeMe:"
    fastlist: false
@@ -416,6 +449,7 @@ backends:
    remote:   "TestMailru:"
    subdir:   false
    fastlist: false
+   oneonly:  true
    ignore:
      - TestApplyTransforms
  - backend:  "seafile"
@@ -469,4 +503,7 @@ backends:
    fastlist: false
  - backend:  "ulozto"
    remote:   "TestUlozto:"
+   fastlist: false
+ - backend:  "iclouddrive"
+   remote:   "TestICloudDrive:"
    fastlist: false

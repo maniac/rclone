@@ -505,6 +505,8 @@ processed in.
 Arrange the order of filter rules with the most restrictive first and
 work down.
 
+Lines starting with # or ; are ignored, and can be used to write comments. Inline comments are not supported. _Use `-vv --dump filters` to see how they appear in the final regexp._
+
 E.g. for `filter-file.txt`:
 
     # a sample filter rule file
@@ -512,6 +514,7 @@ E.g. for `filter-file.txt`:
     + *.jpg
     + *.png
     + file2.avi
+    - /dir/tmp/** # WARNING! This text will be treated as part of the path.
     - /dir/Trash/**
     + /dir/**
     # exclude everything else
@@ -673,7 +676,7 @@ remote or flag value. The fix then is to quote values containing spaces.
 ### `--min-size` - Don't transfer any file smaller than this
 
 Controls the minimum size file within the scope of an rclone command.
-Default units are `KiB` but abbreviations `K`, `M`, `G`, `T` or `P` are valid.
+Default units are `KiB` but abbreviations `B`, `K`, `M`, `G`, `T` or `P` are valid.
 
 E.g. `rclone ls remote: --min-size 50k` lists files on `remote:` of 50 KiB
 size or larger.
@@ -683,7 +686,7 @@ See [the size option docs](/docs/#size-option) for more info.
 ### `--max-size` - Don't transfer any file larger than this
 
 Controls the maximum size file within the scope of an rclone command.
-Default units are `KiB` but abbreviations `K`, `M`, `G`, `T` or `P` are valid.
+Default units are `KiB` but abbreviations `B`, `K`, `M`, `G`, `T` or `P` are valid.
 
 E.g. `rclone ls remote: --max-size 1G` lists files on `remote:` of 1 GiB
 size or smaller.

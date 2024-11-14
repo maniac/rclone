@@ -3,18 +3,26 @@ package pikpak
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
 	"crypto/sha1"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/rclone/rclone/backend/pikpak/api"
+	"github.com/rclone/rclone/fs"
+	"github.com/rclone/rclone/fs/config/configmap"
+	"github.com/rclone/rclone/fs/fserrors"
 	"github.com/rclone/rclone/lib/rest"
 )
 
@@ -253,6 +261,42 @@ func (f *Fs) requestShare(ctx context.Context, req *api.RequestShare) (info *api
 	return
 }
 
+// getGcid retrieves Gcid cached in API server
+func (f *Fs) getGcid(ctx context.Context, src fs.ObjectInfo) (gcid string, err error) {
+	cid, err := calcCid(ctx, src)
+	if err != nil {
+		return
+	}
+	if src.Size() == 0 {
+		// If src is zero-length, the API will return
+		// Error "cid and file_size is required" (400)
+		// In this case, we can simply return cid == gcid
+		return cid, nil
+	}
+
+	params := url.Values{}
+	params.Set("cid", cid)
+	params.Set("file_size", strconv.FormatInt(src.Size(), 10))
+	opts := rest.Opts{
+		Method:     "GET",
+		Path:       "/drive/v1/resource/cid",
+		Parameters: params,
+	}
+
+	info := struct {
+		Gcid string `json:"gcid,omitempty"`
+	}{}
+	var resp *http.Response
+	err = f.pacer.Call(func() (bool, error) {
+		resp, err = f.rst.CallJSON(ctx, &opts, nil, &info)
+		return f.shouldRetry(ctx, resp, err)
+	})
+	if err != nil {
+		return "", err
+	}
+	return info.Gcid, nil
+}
+
 // Read the gcid of in returning a reader which will read the same contents
 //
 // The cleanup function should be called when out is finished with
@@ -306,11 +350,14 @@ func readGcid(in io.Reader, size, threshold int64) (gcid string, out io.Reader, 
 	return
 }
 
+// calcGcid calculates Gcid from reader
+//
+// Gcid is a custom hash to index a file contents
 func calcGcid(r io.Reader, size int64) (string, error) {
 	calcBlockSize := func(j int64) int64 {
 		var psize int64 = 0x40000
 		for float64(j)/float64(psize) > 0x200 && psize < 0x200000 {
-			psize = psize << 1
+			psize <<= 1
 		}
 		return psize
 	}
@@ -329,4 +376,282 @@ func calcGcid(r io.Reader, size int64) (string, error) {
 		totalHash.Write(blockHash.Sum(nil))
 	}
 	return hex.EncodeToString(totalHash.Sum(nil)), nil
+}
+
+// unWrapObjectInfo returns the underlying Object unwrapped as much as
+// possible or nil even if it is an OverrideRemote
+func unWrapObjectInfo(oi fs.ObjectInfo) fs.Object {
+	if o, ok := oi.(fs.Object); ok {
+		return fs.UnWrapObject(o)
+	} else if do, ok := oi.(*fs.OverrideRemote); ok {
+		// Unwrap if it is an operations.OverrideRemote
+		return do.UnWrap()
+	}
+	return nil
+}
+
+// calcCid calculates Cid from source
+//
+// Cid is a simplified version of Gcid
+func calcCid(ctx context.Context, src fs.ObjectInfo) (cid string, err error) {
+	srcObj := unWrapObjectInfo(src)
+	if srcObj == nil {
+		return "", fmt.Errorf("failed to unwrap object from src: %s", src)
+	}
+
+	size := src.Size()
+	hash := sha1.New()
+	var rc io.ReadCloser
+
+	readHash := func(start, length int64) (err error) {
+		end := start + length - 1
+		if rc, err = srcObj.Open(ctx, &fs.RangeOption{Start: start, End: end}); err != nil {
+			return fmt.Errorf("failed to open src with range (%d, %d): %w", start, end, err)
+		}
+		defer fs.CheckClose(rc, &err)
+		_, err = io.Copy(hash, rc)
+		return err
+	}
+
+	if size <= 0xF000 { // 61440 = 60KB
+		err = readHash(0, size)
+	} else { // 20KB from three different parts
+		for _, start := range []int64{0, size / 3, size - 0x5000} {
+			err = readHash(start, 0x5000)
+			if err != nil {
+				break
+			}
+		}
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to hash: %w", err)
+	}
+	cid = strings.ToUpper(hex.EncodeToString(hash.Sum(nil)))
+	return
+}
+
+// ------------------------------------------------------------ authorization
+
+// randomly generates device id used for request header 'x-device-id'
+//
+// original javascript implementation
+//
+//	return "xxxxxxxxxxxx4xxxyxxxxxxxxxxxxxxx".replace(/[xy]/g, (e) => {
+//	    const t = (16 * Math.random()) | 0;
+//	    return ("x" == e ? t : (3 & t) | 8).toString(16);
+//	});
+func genDeviceID() string {
+	base := []byte("xxxxxxxxxxxx4xxxyxxxxxxxxxxxxxxx")
+	for i, char := range base {
+		switch char {
+		case 'x':
+			base[i] = fmt.Sprintf("%x", rand.Intn(16))[0]
+		case 'y':
+			base[i] = fmt.Sprintf("%x", rand.Intn(16)&3|8)[0]
+		}
+	}
+	return string(base)
+}
+
+var md5Salt = []string{
+	"C9qPpZLN8ucRTaTiUMWYS9cQvWOE",
+	"+r6CQVxjzJV6LCV",
+	"F",
+	"pFJRC",
+	"9WXYIDGrwTCz2OiVlgZa90qpECPD6olt",
+	"/750aCr4lm/Sly/c",
+	"RB+DT/gZCrbV",
+	"",
+	"CyLsf7hdkIRxRm215hl",
+	"7xHvLi2tOYP0Y92b",
+	"ZGTXXxu8E/MIWaEDB+Sm/",
+	"1UI3",
+	"E7fP5Pfijd+7K+t6Tg/NhuLq0eEUVChpJSkrKxpO",
+	"ihtqpG6FMt65+Xk+tWUH2",
+	"NhXXU9rg4XXdzo7u5o",
+}
+
+func md5Sum(text string) string {
+	hash := md5.Sum([]byte(text))
+	return hex.EncodeToString(hash[:])
+}
+
+func calcCaptchaSign(deviceID string) (timestamp, sign string) {
+	timestamp = fmt.Sprint(time.Now().UnixMilli())
+	str := fmt.Sprint(clientID, clientVersion, packageName, deviceID, timestamp)
+	for _, salt := range md5Salt {
+		str = md5Sum(str + salt)
+	}
+	sign = "1." + str
+	return
+}
+
+func newCaptchaTokenRequest(action, oldToken string, opt *Options) (req *api.CaptchaTokenRequest) {
+	req = &api.CaptchaTokenRequest{
+		Action:       action,
+		CaptchaToken: oldToken, // can be empty initially
+		ClientID:     clientID,
+		DeviceID:     opt.DeviceID,
+		Meta:         new(api.CaptchaTokenMeta),
+	}
+	switch action {
+	case "POST:/v1/auth/signin":
+		req.Meta.UserName = opt.Username
+	default:
+		timestamp, captchaSign := calcCaptchaSign(opt.DeviceID)
+		req.Meta.CaptchaSign = captchaSign
+		req.Meta.Timestamp = timestamp
+		req.Meta.ClientVersion = clientVersion
+		req.Meta.PackageName = packageName
+		req.Meta.UserID = opt.UserID
+	}
+	return
+}
+
+// CaptchaTokenSource stores updated captcha tokens in the config file
+type CaptchaTokenSource struct {
+	mu    sync.Mutex
+	m     configmap.Mapper
+	opt   *Options
+	token *api.CaptchaToken
+	ctx   context.Context
+	rst   *pikpakClient
+}
+
+// initialize CaptchaTokenSource from rclone.conf if possible
+func newCaptchaTokenSource(ctx context.Context, opt *Options, m configmap.Mapper) *CaptchaTokenSource {
+	token := new(api.CaptchaToken)
+	tokenString, ok := m.Get("captcha_token")
+	if !ok || tokenString == "" {
+		fs.Debugf(nil, "failed to read captcha token out of config file")
+	} else {
+		if err := json.Unmarshal([]byte(tokenString), token); err != nil {
+			fs.Debugf(nil, "failed to parse captcha token out of config file: %v", err)
+		}
+	}
+	return &CaptchaTokenSource{
+		m:     m,
+		opt:   opt,
+		token: token,
+		ctx:   ctx,
+		rst:   newPikpakClient(getClient(ctx, opt), opt),
+	}
+}
+
+// requestToken retrieves captcha token from API
+func (cts *CaptchaTokenSource) requestToken(ctx context.Context, req *api.CaptchaTokenRequest) (err error) {
+	opts := rest.Opts{
+		Method:  "POST",
+		RootURL: "https://user.mypikpak.com/v1/shield/captcha/init",
+	}
+	var info *api.CaptchaToken
+	_, err = cts.rst.CallJSON(ctx, &opts, &req, &info)
+	if err == nil && info.ExpiresIn != 0 {
+		// populate to Expiry
+		info.Expiry = time.Now().Add(time.Duration(info.ExpiresIn) * time.Second)
+		cts.token = info // update with a new one
+	}
+	return
+}
+
+func (cts *CaptchaTokenSource) refreshToken(opts *rest.Opts) (string, error) {
+	oldToken := ""
+	if cts.token != nil {
+		oldToken = cts.token.CaptchaToken
+	}
+	action := "GET:/drive/v1/about"
+	if opts.RootURL == "" && opts.Path != "" {
+		action = fmt.Sprintf("%s:%s", opts.Method, opts.Path)
+	} else if u, err := url.Parse(opts.RootURL); err == nil {
+		action = fmt.Sprintf("%s:%s", opts.Method, u.Path)
+	}
+	req := newCaptchaTokenRequest(action, oldToken, cts.opt)
+	if err := cts.requestToken(cts.ctx, req); err != nil {
+		return "", fmt.Errorf("failed to retrieve captcha token from api: %w", err)
+	}
+
+	// put it into rclone.conf
+	tokenBytes, err := json.Marshal(cts.token)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal captcha token: %w", err)
+	}
+	cts.m.Set("captcha_token", string(tokenBytes))
+	return cts.token.CaptchaToken, nil
+}
+
+// Invalidate resets existing captcha token for a forced refresh
+func (cts *CaptchaTokenSource) Invalidate() {
+	cts.mu.Lock()
+	cts.token.CaptchaToken = ""
+	cts.mu.Unlock()
+}
+
+// Token returns a valid captcha token
+func (cts *CaptchaTokenSource) Token(opts *rest.Opts) (string, error) {
+	cts.mu.Lock()
+	defer cts.mu.Unlock()
+	if cts.token.Valid() {
+		return cts.token.CaptchaToken, nil
+	}
+	return cts.refreshToken(opts)
+}
+
+// pikpakClient wraps rest.Client with a handle of captcha token
+type pikpakClient struct {
+	opt     *Options
+	client  *rest.Client
+	captcha *CaptchaTokenSource
+}
+
+// newPikpakClient takes an (oauth) http.Client and makes a new api instance for pikpak with
+// * error handler
+// * root url
+// * default headers
+func newPikpakClient(c *http.Client, opt *Options) *pikpakClient {
+	client := rest.NewClient(c).SetErrorHandler(errorHandler).SetRoot(rootURL)
+	for key, val := range map[string]string{
+		"Referer":          "https://mypikpak.com/",
+		"x-client-id":      clientID,
+		"x-client-version": clientVersion,
+		"x-device-id":      opt.DeviceID,
+		// "x-device-model":   "firefox%2F129.0",
+		// "x-device-name":    "PC-Firefox",
+		// "x-device-sign": fmt.Sprintf("wdi10.%sxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", opt.DeviceID),
+		// "x-net-work-type":    "NONE",
+		// "x-os-version":       "Win32",
+		// "x-platform-version": "1",
+		// "x-protocol-version": "301",
+		// "x-provider-name":    "NONE",
+		// "x-sdk-version":      "8.0.3",
+	} {
+		client.SetHeader(key, val)
+	}
+	return &pikpakClient{
+		client: client,
+		opt:    opt,
+	}
+}
+
+// This should be called right after pikpakClient initialized
+func (c *pikpakClient) SetCaptchaTokener(ctx context.Context, m configmap.Mapper) *pikpakClient {
+	c.captcha = newCaptchaTokenSource(ctx, c.opt, m)
+	return c
+}
+
+func (c *pikpakClient) CallJSON(ctx context.Context, opts *rest.Opts, request interface{}, response interface{}) (resp *http.Response, err error) {
+	if c.captcha != nil {
+		token, err := c.captcha.Token(opts)
+		if err != nil || token == "" {
+			return nil, fserrors.FatalError(fmt.Errorf("couldn't get captcha token: %v", err))
+		}
+		if opts.ExtraHeaders == nil {
+			opts.ExtraHeaders = make(map[string]string)
+		}
+		opts.ExtraHeaders["x-captcha-token"] = token
+	}
+	return c.client.CallJSON(ctx, opts, request, response)
+}
+
+func (c *pikpakClient) Call(ctx context.Context, opts *rest.Opts) (resp *http.Response, err error) {
+	return c.client.Call(ctx, opts)
 }
