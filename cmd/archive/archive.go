@@ -58,7 +58,7 @@ Or like this to output any .txt files in dir or its subdirectories.
 
 				in, err := o.Open(ctx, options...)
 				if err != nil {
-					err = fs.CountError(err)
+					err = fs.CountError(ctx, err)
 					fs.Errorf(o, "Failed to open: %v", err)
 					return
 				}
@@ -80,7 +80,7 @@ Or like this to output any .txt files in dir or its subdirectories.
 				archive.WriteHeader(h)
 				_, err = io.Copy(archive, in)
 				if err != nil {
-					err = fs.CountError(err)
+					err = fs.CountError(ctx, err)
 					fs.Errorf(o, "Failed to write: %v", err)
 					return
 				}
