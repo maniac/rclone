@@ -908,3 +908,6 @@ put them back in again.` >}}
   * Moises Lima <mozlima@gmail.com>
   * Dimitar Ivanov <mimiteto@gmail.com>
   * shenpengfeng <xinhangzhou@icloud.com>
+  * Dimitrios Slamaris <dim0x69@users.noreply.github.com>
+  * vintagefuture <39503528+vintagefuture@users.noreply.github.com>
+  * David Seifert <soap@gentoo.org>
